@@ -1,0 +1,26 @@
+AI_Assistant_Project/
+│
+├── app.py                  # Main Flask backend
+│
+├── models/                 # All AI models
+│   ├── object_detection.py
+│   ├── face_recognition.py
+│   ├── emotion_detection.py
+│   ├── sign_detection.py
+│
+├── learning/               # Learning system (your innovation 🔥)
+│   ├── unknown_handler.py
+│   ├── data.json
+│
+├── static/                 # Frontend files
+│   ├── style.css
+│   ├── script.js
+│
+├── templates/              # HTML files
+│   ├── index.html
+│
+├── database/               # Stored data
+│   ├── faces/
+│   ├── objects/
+│
+└── requirements.txt
