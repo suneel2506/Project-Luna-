@@ -1,0 +1,339 @@
+# 🌙 Project LUNA — Interactive AI Vision Assistant
+
+An AI-powered vision assistant that sees, understands, talks, and learns — with a stunning modern chat UI.
+
+---
+
+## Architecture Overview
+
+```mermaid
+graph TB
+    subgraph Frontend["Frontend (React + Vite + Tailwind)"]
+        UI[Chat UI] --> Camera[Camera Preview]
+        UI --> Input[Message Input]
+        UI --> Results[Detection Results]
+    end
+
+    subgraph Backend["Backend (Flask API)"]
+        API[Flask REST API]
+        API --> OD[Object Detection - YOLO]
+        API --> FR[Face Recognition]
+        API --> ED[Emotion Detection]
+        API --> SD[Sign Language Detection]
+        API --> UH[Unknown Handler / Learning]
+        API --> TR[Translator]
+    end
+
+    subgraph Storage["Storage Layer"]
+        JSON1[learned_objects.json]
+        JSON2[learned_faces.json]
+        FACES[faces/ encodings]
+    end
+
+    Frontend -->|Axios HTTP| Backend
+    Backend --> Storage
+```
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Tailwind CSS**: You requested Tailwind CSS — I'll use **Tailwind CSS v3** with the Vite plugin. Please confirm if you want a different version.
+
+> [!IMPORTANT]
+> **Camera Access**: The camera preview will use the browser's `getUserMedia` API. Frames will be captured from a `<video>` element and sent to the backend as base64 images via the `/process` endpoint. This requires HTTPS in production (localhost works for development).
+
+> [!WARNING]
+> **Heavy AI Dependencies**: Libraries like `ultralytics` (YOLO), `face_recognition` (requires `dlib` + CMake), and `mediapipe` can be large and may require build tools. I'll provide clear setup instructions. Some models will use **placeholder logic** that's structured to support real models.
+
+> [!NOTE]
+> **Emotion Detection**: Instead of requiring a large custom model, I'll use a lightweight approach with `deepface` or a placeholder CNN. The architecture will support swapping in any real model.
+
+---
+
+## Proposed Changes
+
+### 📁 Final Project Structure
+
+```
+Project LUNA/
+├── backend/
+│   ├── app.py                    # Flask application & API routes
+│   ├── config.py                 # Configuration settings
+│   ├── requirements.txt          # Python dependencies
+│   │
+│   ├── models/                   # AI detection modules
+│   │   ├── __init__.py
+│   │   ├── object_detection.py   # YOLO-based object detection
+│   │   ├── face_recognition_module.py  # Face encoding & recognition
+│   │   ├── emotion_detection.py  # Emotion classification
+│   │   └── sign_detection.py     # MediaPipe hand sign detection
+│   │
+│   ├── learning/                 # Human-in-the-loop learning
+│   │   ├── __init__.py
+│   │   └── unknown_handler.py    # Handle unknown detections
+│   │
+│   ├── utils/                    # Utility modules
+│   │   ├── __init__.py
+│   │   ├── translator.py         # Multi-language translation
+│   │   └── response_generator.py # Natural language responses
+│   │
+│   ├── storage/                  # Persistent data
+│   │   ├── faces/                # Face encoding files
+│   │   ├── learned_objects.json  # Learned object labels
+│   │   └── learned_faces.json    # Face name mappings
+│   │
+│   └── tests/                    # Backend tests
+│       └── test_api.py
+│
+├── frontend/
+│   ├── index.html
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   │
+│   ├── public/
+│   │   └── luna-icon.svg
+│   │
+│   └── src/
+│       ├── main.jsx
+│       ├── App.jsx
+│       ├── index.css             # Tailwind imports + custom styles
+│       │
+│       ├── components/
+│       │   ├── ChatWindow.jsx    # Main chat message area
+│       │   ├── ChatMessage.jsx   # Individual message bubble
+│       │   ├── ChatInput.jsx     # Text input + send button
+│       │   ├── CameraPreview.jsx # Webcam preview panel
+│       │   ├── DetectionOverlay.jsx  # Detection result badges
+│       │   ├── Sidebar.jsx       # Navigation sidebar
+│       │   ├── Header.jsx        # App header with controls
+│       │   └── LearningModal.jsx # Modal for labeling unknowns
+│       │
+│       ├── hooks/
+│       │   ├── useCamera.js      # Camera access hook
+│       │   └── useChat.js        # Chat state management
+│       │
+│       ├── services/
+│       │   └── api.js            # Axios API client
+│       │
+│       └── utils/
+│           └── constants.js      # App constants
+│
+└── README.md                     # Setup & run instructions
+```
+
+---
+
+### Component 1: Backend — Flask API Server
+
+#### [NEW] [app.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/app.py)
+- Flask application with CORS support
+- **Endpoints:**
+  - `POST /api/process` — Accepts base64 image, runs all detectors, returns JSON results
+  - `POST /api/learn` — Accepts user label for unknown face/object, stores it
+  - `GET /api/status` — Health check
+  - `GET /api/history` — Get learned items
+- Returns structured JSON:
+```json
+{
+  "objects": [{"label": "bottle", "confidence": 0.92, "bbox": [...]}],
+  "faces": [{"name": "Suneel", "location": [...]}],
+  "emotion": "happy",
+  "signs": ["hello"],
+  "unknown_faces": [{"id": "face_001", "encoding": "..."}],
+  "unknown_objects": [{"id": "obj_001", "crop": "base64..."}],
+  "message": "I see Suneel looking happy! There's a bottle on the table.",
+  "translations": {
+    "en": "...",
+    "ta": "...",
+    "hi": "..."
+  }
+}
+```
+
+#### [NEW] [config.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/config.py)
+- Configuration for model paths, storage paths, confidence thresholds
+- Debug/Production toggle
+
+---
+
+### Component 2: AI Detection Modules
+
+#### [NEW] [object_detection.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/models/object_detection.py)
+- Uses `ultralytics` YOLO (YOLOv8n — nano model for speed)
+- `detect_objects(frame)` → returns list of detected objects with labels, confidence, bounding boxes
+- Falls back to placeholder if YOLO model not available
+- Checks `learned_objects.json` for custom labels
+
+#### [NEW] [face_recognition_module.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/models/face_recognition_module.py)
+- Uses `face_recognition` library for encoding & matching
+- `detect_faces(frame)` → returns list of faces with names or "unknown"
+- `learn_face(encoding, name)` → stores new face encoding
+- Loads known faces from `storage/faces/` on startup
+
+#### [NEW] [emotion_detection.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/models/emotion_detection.py)
+- Uses `deepface` library or a lightweight FER model
+- `detect_emotion(frame, face_location)` → returns emotion label (happy, sad, angry, neutral, surprise, fear, disgust)
+- Falls back to placeholder random detection if model unavailable
+
+#### [NEW] [sign_detection.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/models/sign_detection.py)
+- Uses `mediapipe` for hand landmark detection
+- Implements rule-based sign classification for: Hello, Yes, No, Thank You, Help, I Love You
+- `detect_signs(frame)` → returns list of detected signs
+- Landmark geometry analysis (finger positions, angles)
+
+---
+
+### Component 3: Learning System
+
+#### [NEW] [unknown_handler.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/learning/unknown_handler.py)
+- `flag_unknown_face(encoding, face_id)` → stores temporarily, triggers chat question
+- `flag_unknown_object(crop_image, obj_id)` → stores temporarily, triggers learning flow
+- `learn_from_user(item_type, item_id, label)` → permanently stores the label
+- Manages `learned_objects.json` and `learned_faces.json`
+
+---
+
+### Component 4: Utilities
+
+#### [NEW] [translator.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/utils/translator.py)
+- Translates detection results to English, Tamil, and Hindi
+- Uses `googletrans` or simple dictionary-based translation for common terms
+- Falls back to English if translation fails
+
+#### [NEW] [response_generator.py](file:///c:/Users/sk600/Documents/Project%20LUNA/backend/utils/response_generator.py)
+- Generates natural, human-like response sentences from detection data
+- Templates for different scenarios (known face, unknown face, emotions, objects, signs)
+- Contextual awareness (combines multiple detections into one coherent message)
+
+---
+
+### Component 5: Frontend — React Chat UI
+
+#### Design Vision
+- **Dark theme** with deep navy/charcoal background
+- **Glassmorphism** cards and panels
+- **Purple/cyan gradient** accents (Luna = Moon theme 🌙)
+- **Smooth animations**: message slide-in, fade, pulse effects
+- **Split layout**: Camera on left, Chat on right (responsive → stacks on mobile)
+
+#### [NEW] [App.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/App.jsx)
+- Main app layout with sidebar, camera, and chat panels
+- State management for detection mode, messages, learning prompts
+
+#### [NEW] [ChatWindow.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/components/ChatWindow.jsx)
+- Scrollable message list with auto-scroll to latest
+- Different message types: user, ai, system, learning-prompt
+- Typing indicator animation
+
+#### [NEW] [ChatMessage.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/components/ChatMessage.jsx)
+- Individual message bubble component
+- User messages: right-aligned, gradient background
+- AI messages: left-aligned, glass effect
+- Detection result badges (object, face, emotion, sign icons)
+- Timestamp display
+
+#### [NEW] [ChatInput.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/components/ChatInput.jsx)
+- Text input with glassmorphic styling
+- Send button with icon
+- "Start/Stop Detection" toggle button
+- Keyboard shortcut (Enter to send)
+
+#### [NEW] [CameraPreview.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/components/CameraPreview.jsx)
+- Live webcam feed using `getUserMedia`
+- Canvas overlay for detection bounding boxes
+- Status indicator (active/inactive)
+- Frame capture and send to backend at configurable interval
+
+#### [NEW] [LearningModal.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/components/LearningModal.jsx)
+- Modal dialog for labeling unknown faces/objects
+- Shows cropped image of unknown detection
+- Text input for label
+- Submit sends to `/api/learn`
+
+#### [NEW] [Header.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/components/Header.jsx)
+- App title "LUNA" with moon icon
+- Language selector (EN / தமிழ் / हिंदी)
+- Detection status indicator
+
+#### [NEW] [Sidebar.jsx](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/components/Sidebar.jsx)
+- Navigation: Chat, Learned Items, Settings
+- Stats: total faces learned, objects learned
+- Toggle individual detectors on/off
+
+---
+
+### Component 6: Frontend Services & Hooks
+
+#### [NEW] [api.js](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/services/api.js)
+- Axios instance with base URL configuration
+- `processFrame(imageData)` → POST to `/api/process`
+- `submitLabel(type, id, label)` → POST to `/api/learn`
+- Error handling and retry logic
+
+#### [NEW] [useCamera.js](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/hooks/useCamera.js)
+- Custom hook for camera access
+- Frame capture at intervals
+- Start/stop camera controls
+
+#### [NEW] [useChat.js](file:///c:/Users/sk600/Documents/Project%20LUNA/frontend/src/hooks/useChat.js)
+- Chat message state management
+- Message history
+- Auto-scroll behavior
+
+---
+
+### Component 7: Documentation
+
+#### [NEW] [README.md](file:///c:/Users/sk600/Documents/Project%20LUNA/README.md)
+- Project overview
+- Feature list with screenshots
+- Prerequisites (Python 3.9+, Node.js 18+, CMake)
+- Step-by-step setup for backend and frontend
+- API documentation
+- Troubleshooting guide
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Q1: Camera approach** — Should the camera processing happen:
+> - **(a) Continuously** at a set interval (e.g., every 2 seconds) while detection is active, OR
+> - **(b) On-demand** only when user clicks a "Capture" button?
+> 
+> I recommend **(a)** for a more interactive, real-time feel. Default: every 2 seconds.
+
+> [!NOTE]
+> **Q2: `face_recognition` library** — This library requires `dlib` which needs CMake and a C++ compiler. If you don't have CMake installed, I can use a simpler face detection approach (OpenCV's Haar cascades) initially and structure the code to easily swap in `face_recognition` later. Do you have CMake installed?
+
+> [!NOTE]
+> **Q3: Translation API** — For multi-language support, should I:
+> - **(a)** Use `googletrans` (free, no API key, but can be rate-limited), OR
+> - **(b)** Use a local dictionary for common detection terms (no external API, always works)?
+> 
+> I recommend **(b)** for reliability, with **(a)** as optional enhancement.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. **Backend API tests**: Run `pytest backend/tests/test_api.py` to verify endpoints
+2. **Frontend build**: Run `npm run build` in frontend to verify no build errors
+3. **Lint check**: Run linting on both Python and JS code
+
+### Manual Verification
+1. **Start backend**: `cd backend && python app.py` — verify API responds at `http://localhost:5000/api/status`
+2. **Start frontend**: `cd frontend && npm run dev` — verify UI loads at `http://localhost:5173`
+3. **Browser test**: Open the app, verify:
+   - Chat UI renders with dark theme
+   - Camera preview works (if webcam available)
+   - "Start Detection" button triggers processing
+   - Detection results appear as chat messages
+   - Learning modal appears for unknown detections
+   - Language switching works
+4. **End-to-end flow**: Capture frame → process → display results → learn unknown → verify remembered
