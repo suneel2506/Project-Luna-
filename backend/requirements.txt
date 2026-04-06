@@ -1,0 +1,15 @@
+# Project LUNA — Backend Dependencies
+# Core
+flask==3.1.0
+flask-cors==5.0.1
+numpy>=1.24.0
+opencv-python>=4.8.0
+
+# AI Models (install as needed)
+ultralytics>=8.0.0        # YOLOv8 object detection
+mediapipe>=0.10.0         # Hand landmark detection
+
+# Optional: Enhanced features (may require additional system deps)
+# face_recognition>=1.3.0 # Requires dlib + CMake
+# deepface>=0.0.79        # Emotion detection
+# googletrans==4.0.0-rc1  # Dynamic translation
