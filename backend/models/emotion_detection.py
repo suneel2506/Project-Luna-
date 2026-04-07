@@ -139,47 +139,7 @@ class EmotionDetector:
 
     def _placeholder_detect(self, frame, face_locations=None):
         """
-        Placeholder emotion detection for development/testing.
-        Returns simulated emotion results.
+        Placeholder when deepface is unavailable.
+        Returns empty list — no fake detections.
         """
-        results = []
-
-        if face_locations:
-            for loc in face_locations:
-                # Weighted random — "neutral" and "happy" are more common
-                weights = [0.3, 0.1, 0.05, 0.35, 0.1, 0.05, 0.05]
-                emotion = random.choices(self.EMOTIONS, weights=weights, k=1)[0]
-
-                results.append({
-                    "emotion": emotion,
-                    "confidence": round(random.uniform(0.6, 0.95), 2),
-                    "location": loc,
-                    "all_emotions": {
-                        e: round(random.uniform(0.01, 0.3), 2)
-                        for e in self.EMOTIONS
-                    }
-                })
-                # Fix the dominant emotion score
-                results[-1]["all_emotions"][emotion] = results[-1]["confidence"]
-        else:
-            # If no face locations, check if there's a face in the frame
-            # For placeholder, randomly decide if a face is present
-            if random.random() > 0.5:
-                emotion = random.choices(
-                    self.EMOTIONS,
-                    weights=[0.3, 0.1, 0.05, 0.35, 0.1, 0.05, 0.05],
-                    k=1
-                )[0]
-                h, w = frame.shape[:2] if frame is not None else (480, 640)
-                results.append({
-                    "emotion": emotion,
-                    "confidence": round(random.uniform(0.6, 0.95), 2),
-                    "location": [w // 4, h // 4, 3 * w // 4, 3 * h // 4],
-                    "all_emotions": {
-                        e: round(random.uniform(0.01, 0.3), 2)
-                        for e in self.EMOTIONS
-                    }
-                })
-                results[-1]["all_emotions"][emotion] = results[-1]["confidence"]
-
-        return results
+        return []

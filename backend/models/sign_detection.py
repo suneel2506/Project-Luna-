@@ -42,9 +42,9 @@ class SignDetector:
             self.mp_draw = mp.solutions.drawing_utils
             self.mediapipe_available = True
             logger.info("✅ MediaPipe loaded for sign detection")
-        except ImportError:
+        except (ImportError, AttributeError, Exception) as e:
             self.mediapipe_available = False
-            logger.warning("⚠️ MediaPipe not installed. Using placeholder sign detection.")
+            logger.warning(f"⚠️ MediaPipe not available ({e}). Using placeholder sign detection.")
 
     def detect(self, frame):
         """
@@ -170,17 +170,9 @@ class SignDetector:
 
     def _placeholder_detect(self):
         """
-        Placeholder sign detection for development/testing.
-        Randomly returns a sign detection with low probability.
+        Placeholder when MediaPipe is unavailable.
+        Returns empty list — no fake detections.
         """
-        if random.random() > 0.7:  # 30% chance of detection
-            sign = random.choice(SUPPORTED_SIGNS)
-            return [{
-                "sign": sign,
-                "confidence": round(random.uniform(0.6, 0.95), 2),
-                "hand": random.choice(["left", "right"]),
-                "landmarks": []
-            }]
         return []
 
     def get_supported_signs(self):

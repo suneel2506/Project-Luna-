@@ -96,37 +96,10 @@ class ObjectDetector:
 
     def _placeholder_detect(self, frame):
         """
-        Placeholder detection when YOLO is unavailable.
-        Returns a simulated detection for development/testing.
+        Placeholder when YOLO is unavailable.
+        Returns empty list — no fake detections.
         """
-        import random
-
-        # Common objects for placeholder
-        placeholder_objects = [
-            "person", "bottle", "laptop", "phone", "book",
-            "cup", "chair", "keyboard", "mouse", "monitor"
-        ]
-
-        # Simulate 0-3 detections
-        num_detections = random.randint(0, 3)
-        h, w = frame.shape[:2] if frame is not None else (480, 640)
-        detections = []
-
-        for _ in range(num_detections):
-            label = random.choice(placeholder_objects)
-            x1 = random.randint(0, w // 2)
-            y1 = random.randint(0, h // 2)
-            x2 = x1 + random.randint(50, 200)
-            y2 = y1 + random.randint(50, 200)
-
-            detections.append({
-                "label": label,
-                "confidence": round(random.uniform(0.5, 0.99), 2),
-                "bbox": [x1, y1, min(x2, w), min(y2, h)],
-                "is_learned": False
-            })
-
-        return detections
+        return []
 
     def reload_learned_objects(self):
         """Reload learned objects from storage (called after learning)."""

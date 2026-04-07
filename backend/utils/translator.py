@@ -186,16 +186,17 @@ class Translator:
             except Exception:
                 pass
 
-        # Fallback: word-by-word replacement
+        # Fallback: word-by-word replacement (whole words only)
         translated = message
         dict_for_lang = self.dictionaries.get(lang, {})
 
-        for eng, trans in dict_for_lang.items():
-            # Case-insensitive replacement
+        # Sort by length (longest first) to avoid partial replacements
+        sorted_terms = sorted(dict_for_lang.items(), key=lambda x: len(x[0]), reverse=True)
+        for eng, trans in sorted_terms:
+            # Use word boundaries to only match whole words
             import re
-            translated = re.sub(
-                re.escape(eng), trans, translated, flags=re.IGNORECASE
-            )
+            pattern = r'\b' + re.escape(eng) + r'\b'
+            translated = re.sub(pattern, trans, translated, flags=re.IGNORECASE)
 
         return translated
 
