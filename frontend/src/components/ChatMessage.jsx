@@ -76,8 +76,18 @@ export default function ChatMessage({ message }) {
     }
   }
 
-  // Translations
+  // Translations — only show non-English translations that differ from the main message
   const translations = detectionData?.translations;
+  const hasTranslations =
+    translations &&
+    type === MESSAGE_TYPES.AI &&
+    (translations.ta || translations.hi);
+
+  // Check if translations are actually different from English
+  const showTamil =
+    translations?.ta && translations.ta !== translations?.en && translations.ta !== content;
+  const showHindi =
+    translations?.hi && translations.hi !== translations?.en && translations.hi !== content;
 
   return (
     <div className={`message ${typeClass}`}>
@@ -86,17 +96,17 @@ export default function ChatMessage({ message }) {
         <div className="message-bubble">
           {content}
           {chips.length > 0 && <div className="detection-results">{chips}</div>}
-          {translations && (type === MESSAGE_TYPES.AI) && (
+          {hasTranslations && (showTamil || showHindi) && (
             <div className="translations">
-              {translations.ta && (
+              {showTamil && (
                 <div className="translation-row">
-                  <span className="translation-label">Tamil: </span>
+                  <span className="translation-label">தமிழ்: </span>
                   {translations.ta}
                 </div>
               )}
-              {translations.hi && (
+              {showHindi && (
                 <div className="translation-row">
-                  <span className="translation-label">Hindi: </span>
+                  <span className="translation-label">हिंदी: </span>
                   {translations.hi}
                 </div>
               )}

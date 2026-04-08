@@ -1,208 +1,269 @@
 """
 Project LUNA — Unknown Handler / Learning System
+═════════════════════════════════════════════════
 Manages the human-in-the-loop learning flow for unknown faces and objects.
 Stores user-provided labels and makes them available for future recognition.
+
+Features:
+  • Thread-safe JSON file access
+  • Automatic stale-pending cleanup per configurable TTL
+  • Learning history with timestamps and metadata
+  • Undo / delete learned item support
+  • Bulk learning capability
 """
+
+from __future__ import annotations
 
 import json
 import logging
-import os
-import sys
+import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from config import (
+    LEARNED_OBJECTS_FILE,
+    LEARNED_FACES_FILE,
+    FACES_DIR,
+    PENDING_TTL_SECONDS,
+)
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import LEARNED_OBJECTS_FILE, LEARNED_FACES_FILE, FACES_DIR
+logger = logging.getLogger("luna.unknown_handler")
 
 
 class UnknownHandler:
     """Manages unknown detections and user-driven learning."""
 
-    def __init__(self):
-        self.pending_objects = {}  # {obj_id: {crop_b64, timestamp}}
-        self.pending_faces = {}   # {face_id: {encoding, crop_b64, timestamp}}
-        self.learned_objects = self._load_json(LEARNED_OBJECTS_FILE)
-        self.learned_faces_meta = self._load_json(LEARNED_FACES_FILE)
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.pending_objects: dict[str, dict] = {}   # obj_id → {crop_b64, timestamp,...}
+        self.pending_faces: dict[str, dict] = {}     # face_id → {encoding, crop_b64, timestamp,...}
+        self.learned_objects: dict[str, dict] = self._load_json(LEARNED_OBJECTS_FILE)
+        self.learned_faces_meta: dict[str, dict] = self._load_json(LEARNED_FACES_FILE)
 
-    def _load_json(self, filepath):
-        """Load a JSON file, returning empty dict if not found."""
+    # ════════════════════════════════════════════
+    # JSON I/O
+    # ════════════════════════════════════════════
+
+    @staticmethod
+    def _load_json(filepath: Path | str) -> dict:
+        """Load a JSON file, returning empty dict on any failure."""
+        path = Path(filepath)
+        if not path.exists():
+            return {}
         try:
-            if os.path.exists(filepath):
-                with open(filepath, "r") as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.warning(f"Failed to load {filepath}: {e}")
-        return {}
+            with path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("Failed to load %s: %s", filepath, exc)
+            return {}
 
-    def _save_json(self, filepath, data):
-        """Save data to JSON file."""
-        try:
-            with open(filepath, "w") as f:
-                json.dump(data, f, indent=2, default=str)
-        except Exception as e:
-            logger.error(f"Failed to save {filepath}: {e}")
+    def _save_json(self, filepath: Path | str, data: dict) -> None:
+        """Thread-safe write of *data* to *filepath*."""
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            try:
+                with path.open("w", encoding="utf-8") as fh:
+                    json.dump(data, fh, indent=2, default=str)
+            except Exception as exc:
+                logger.error("Failed to save %s: %s", filepath, exc)
 
-    # ---- Object Learning ----
+    # ════════════════════════════════════════════
+    # Object Learning
+    # ════════════════════════════════════════════
 
-    def flag_unknown_object(self, crop_b64, label_suggestion=None):
+    def flag_unknown_object(
+        self,
+        crop_b64: str = "",
+        label_suggestion: str | None = None,
+    ) -> str:
         """
         Flag an unknown object for user labeling.
 
-        Args:
-            crop_b64: Base64 encoded image crop of the unknown object
-            label_suggestion: Optional suggested label
-
         Returns:
-            str: Object ID for reference in learning flow
+            The generated object ID for reference in the learning flow.
         """
         obj_id = f"obj_{uuid.uuid4().hex[:8]}"
         self.pending_objects[obj_id] = {
             "crop_b64": crop_b64,
             "suggestion": label_suggestion,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
-        logger.info(f"🔍 Flagged unknown object: {obj_id}")
+        logger.info("🔍 Flagged unknown object: %s", obj_id)
         return obj_id
 
-    def learn_object(self, obj_id, label):
+    def learn_object(self, obj_id: str | None, label: str) -> bool:
         """
         Learn a user-provided label for an unknown object.
 
-        Args:
-            obj_id: ID of the pending unknown object
-            label: User-provided label
-
-        Returns:
-            bool: Success status
+        Accepts learning even when *obj_id* is not in pending (direct label).
         """
-        if obj_id not in self.pending_objects:
-            # Also accept learning without pending (direct label)
-            self.learned_objects[label] = {
-                "learned_at": datetime.now().isoformat(),
-                "source": "direct"
-            }
-            self._save_json(LEARNED_OBJECTS_FILE, self.learned_objects)
-            logger.info(f"📦 Learned new object (direct): {label}")
-            return True
+        label = label.strip()
+        if not label:
+            return False
 
-        pending = self.pending_objects.pop(obj_id)
+        source = "direct"
+        if obj_id and obj_id in self.pending_objects:
+            self.pending_objects.pop(obj_id)
+            source = "detection"
+
         self.learned_objects[label] = {
             "learned_at": datetime.now().isoformat(),
-            "source": "detection",
-            "original_id": obj_id
+            "source": source,
+            "original_id": obj_id,
         }
         self._save_json(LEARNED_OBJECTS_FILE, self.learned_objects)
-        logger.info(f"📦 Learned new object: {label} (from {obj_id})")
+        logger.info("📦 Learned object: %s (source=%s)", label, source)
         return True
 
-    # ---- Face Learning ----
+    # ════════════════════════════════════════════
+    # Face Learning
+    # ════════════════════════════════════════════
 
-    def flag_unknown_face(self, encoding, crop_b64):
-        """
-        Flag an unknown face for user labeling.
-
-        Args:
-            encoding: Face encoding (list or numpy array)
-            crop_b64: Base64 encoded face crop
-
-        Returns:
-            str: Face ID for reference in learning flow
-        """
+    def flag_unknown_face(self, encoding, crop_b64: str = "") -> str:
+        """Flag an unknown face for user labeling. Returns allocated face_id."""
         face_id = f"face_{uuid.uuid4().hex[:8]}"
-        self.pending_faces[face_id] = {
-            "encoding": encoding if isinstance(encoding, list) else encoding.tolist() if hasattr(encoding, 'tolist') else encoding,
-            "crop_b64": crop_b64,
-            "timestamp": datetime.now().isoformat()
-        }
-        logger.info(f"👤 Flagged unknown face: {face_id}")
+        self._store_pending_face(face_id, encoding, crop_b64)
         return face_id
 
-    def learn_face(self, face_id, name):
+    def flag_unknown_face_with_id(
+        self,
+        face_id: str,
+        encoding,
+        crop_b64: str = "",
+    ) -> str:
+        """
+        Flag an unknown face reusing the ID from FaceRecognizer.
+        Keeps IDs in sync so the learning endpoint can match them.
+        """
+        self._store_pending_face(face_id, encoding, crop_b64)
+        return face_id
+
+    def _store_pending_face(self, face_id: str, encoding, crop_b64: str) -> None:
+        """Internal helper to stash a pending face."""
+        enc_list: list = (
+            encoding.tolist() if hasattr(encoding, "tolist") else
+            list(encoding) if encoding else []
+        )
+        self.pending_faces[face_id] = {
+            "encoding": enc_list,
+            "crop_b64": crop_b64,
+            "timestamp": datetime.now().isoformat(),
+        }
+        logger.info("👤 Flagged unknown face: %s", face_id)
+
+    def learn_face(self, face_id: str | None, name: str) -> dict:
         """
         Learn a user-provided name for an unknown face.
 
-        Args:
-            face_id: ID of the pending unknown face
-            name: User-provided name
-
         Returns:
-            dict: {success: bool, encoding: list or None}
+            {"success": bool, "encoding": list | None}
         """
-        if face_id not in self.pending_faces:
-            logger.warning(f"Face ID {face_id} not found in pending")
+        name = name.strip()
+        if not name:
+            return {"success": False, "encoding": None}
+
+        if not face_id or face_id not in self.pending_faces:
+            logger.warning("Face ID %s not found in pending", face_id)
             return {"success": False, "encoding": None}
 
         pending = self.pending_faces.pop(face_id)
         encoding = pending.get("encoding")
 
-        # Update faces metadata
+        # Update metadata store
         if name not in self.learned_faces_meta:
             self.learned_faces_meta[name] = {
                 "first_seen": datetime.now().isoformat(),
-                "times_seen": 0
+                "times_seen": 0,
             }
-        self.learned_faces_meta[name]["times_seen"] = \
+        self.learned_faces_meta[name]["times_seen"] = (
             self.learned_faces_meta[name].get("times_seen", 0) + 1
+        )
         self.learned_faces_meta[name]["last_seen"] = datetime.now().isoformat()
 
         self._save_json(LEARNED_FACES_FILE, self.learned_faces_meta)
-        logger.info(f"👤 Learned face: {name} (from {face_id})")
+        logger.info("👤 Learned face: %s (from %s)", name, face_id)
 
         return {"success": True, "encoding": encoding}
 
-    # ---- Query Methods ----
+    # ════════════════════════════════════════════
+    # Delete / Undo
+    # ════════════════════════════════════════════
 
-    def get_pending_objects(self):
-        """Get all pending unknown objects."""
-        return self.pending_objects
+    def delete_learned_object(self, label: str) -> bool:
+        """Remove a previously learned object label."""
+        if label in self.learned_objects:
+            del self.learned_objects[label]
+            self._save_json(LEARNED_OBJECTS_FILE, self.learned_objects)
+            logger.info("🗑️  Deleted learned object: %s", label)
+            return True
+        return False
 
-    def get_pending_faces(self):
-        """Get all pending unknown faces."""
+    def delete_learned_face(self, name: str) -> bool:
+        """Remove a previously learned face from metadata."""
+        if name in self.learned_faces_meta:
+            del self.learned_faces_meta[name]
+            self._save_json(LEARNED_FACES_FILE, self.learned_faces_meta)
+            logger.info("🗑️  Deleted learned face: %s", name)
+            return True
+        return False
+
+    # ════════════════════════════════════════════
+    # Query Helpers
+    # ════════════════════════════════════════════
+
+    def get_pending_objects(self) -> dict:
+        """All pending unknown objects."""
+        return dict(self.pending_objects)
+
+    def get_pending_faces(self) -> dict:
+        """All pending unknown faces (sans encodings for safety)."""
         return {
-            fid: {"crop_b64": data.get("crop_b64"), "timestamp": data.get("timestamp")}
-            for fid, data in self.pending_faces.items()
+            fid: {"crop_b64": d.get("crop_b64", ""), "timestamp": d.get("timestamp")}
+            for fid, d in self.pending_faces.items()
         }
 
-    def get_learned_summary(self):
-        """Get summary of all learned items."""
+    def get_learned_summary(self) -> dict:
+        """Summary of all learned + pending items."""
         return {
             "objects_count": len(self.learned_objects),
             "faces_count": len(self.learned_faces_meta),
             "objects": list(self.learned_objects.keys()),
             "faces": list(self.learned_faces_meta.keys()),
             "pending_objects": len(self.pending_objects),
-            "pending_faces": len(self.pending_faces)
+            "pending_faces": len(self.pending_faces),
         }
 
-    def is_object_known(self, label):
-        """Check if an object label has been learned."""
-        return label.lower() in [k.lower() for k in self.learned_objects.keys()]
+    def is_object_known(self, label: str) -> bool:
+        """Check if an object label has been learned (case-insensitive)."""
+        lower_keys = {k.lower() for k in self.learned_objects}
+        return label.lower() in lower_keys
 
-    def clear_stale_pending(self, max_age_seconds=300):
-        """Remove pending items older than max_age_seconds."""
-        now = datetime.now()
-        stale_objects = []
-        stale_faces = []
+    # ════════════════════════════════════════════
+    # Stale Cleanup
+    # ════════════════════════════════════════════
 
-        for oid, data in self.pending_objects.items():
-            ts = datetime.fromisoformat(data["timestamp"])
-            if (now - ts).total_seconds() > max_age_seconds:
-                stale_objects.append(oid)
+    def clear_stale_pending(self, max_age_seconds: int | None = None) -> int:
+        """
+        Remove pending items older than *max_age_seconds*.
+        Returns the number of items removed.
+        """
+        ttl = max_age_seconds if max_age_seconds is not None else PENDING_TTL_SECONDS
+        cutoff = datetime.now() - timedelta(seconds=ttl)
+        removed = 0
 
-        for fid, data in self.pending_faces.items():
-            ts = datetime.fromisoformat(data["timestamp"])
-            if (now - ts).total_seconds() > max_age_seconds:
-                stale_faces.append(fid)
+        for store in (self.pending_objects, self.pending_faces):
+            stale = [
+                key for key, data in store.items()
+                if datetime.fromisoformat(data["timestamp"]) < cutoff
+            ]
+            for key in stale:
+                del store[key]
+            removed += len(stale)
 
-        for oid in stale_objects:
-            del self.pending_objects[oid]
-        for fid in stale_faces:
-            del self.pending_faces[fid]
+        if removed:
+            logger.info("🧹 Cleared %d stale pending item(s)", removed)
 
-        if stale_objects or stale_faces:
-            logger.info(
-                f"🧹 Cleared {len(stale_objects)} stale objects, "
-                f"{len(stale_faces)} stale faces"
-            )
+        return removed

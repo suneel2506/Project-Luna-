@@ -1,68 +1,39 @@
 # 🌙 Project LUNA — Interactive AI Vision Assistant
 
-An AI-powered vision assistant that **sees**, **understands**, **talks**, and **learns** — with a stunning modern dark-themed chat UI.
+An intelligent vision assistant that **sees**, **understands**, **talks**, and **learns** from you.
+
+LUNA uses real-time computer vision to detect objects, recognize faces, read emotions, and interpret sign language — all through a conversational chat interface with multi-language support.
 
 ---
 
-## 🚀 Features
+## ✨ Features
 
-### 👁️ Computer Vision
-- 📦 **Object Detection** — YOLOv8 nano model for real-time detection
-- 👤 **Face Recognition** — Encoding-based face matching with learning
-- 😊 **Emotion Detection** — DeepFace-powered emotion classification
-- 🤟 **Sign Language Detection** — MediaPipe hand landmark analysis (Hello, Yes, No, Thank You, Help, I Love You)
-
-### 🧠 Human-in-the-Loop Learning
-- Unknown faces trigger a learning prompt — user labels them, LUNA remembers
-- Unknown objects can be taught — persistent JSON storage
-- Knowledge persists across sessions
-
-### 🌍 Multi-Language Support
-- English 🇬🇧
-- Tamil (தமிழ்) 🇮🇳
-- Hindi (हिंदी) 🇮🇳
-
-### 💬 Modern Chat Interface
-- Dark glassmorphic design with purple/cyan gradients
-- Real-time AI responses with detection badges
-- Camera preview with live detection overlay
-- Responsive — works on desktop and mobile
+| Feature | Technology | Status |
+|---|---|---|
+| **Object Detection** | YOLOv8 (Ultralytics) | ✅ Real-time |
+| **Face Recognition** | face_recognition + OpenCV | ✅ Learning-capable |
+| **Emotion Detection** | DeepFace | ✅ 7 emotions |
+| **Sign Language** | MediaPipe Hand Tracking | ✅ 6 gestures |
+| **Multi-Language** | Local dictionaries + googletrans | ✅ EN / TA / HI |
+| **Human-in-the-Loop Learning** | Custom learning system | ✅ Faces + Objects |
+| **Chat Interface** | React + Tailwind CSS | ✅ WhatsApp-style |
 
 ---
 
-## 🏗️ Architecture
+## 🧱 Tech Stack
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  Frontend (React + Vite)                                 │
-│  ┌──────────┐ ┌───────────────┐ ┌──────────────────────┐ │
-│  │ Sidebar  │ │ Camera Panel  │ │ Chat Panel           │ │
-│  │ • Nav    │ │ • Webcam Feed │ │ • Message Bubbles    │ │
-│  │ • Toggles│ │ • Detection   │ │ • Detection Chips    │ │
-│  │ • Stats  │ │   Overlays    │ │ • Learning Prompts   │ │
-│  └──────────┘ └───────┬───────┘ └──────────────────────┘ │
-└───────────────────────┼──────────────────────────────────┘
-                        │ Axios HTTP (base64 frames)
-┌───────────────────────▼──────────────────────────────────┐
-│  Backend (Flask API)                                     │
-│  ┌────────────┐ ┌────────────┐ ┌────────────┐           │
-│  │ YOLO       │ │ Face Rec   │ │ Emotion    │           │
-│  │ Detection  │ │ Module     │ │ Detection  │           │
-│  ├────────────┤ ├────────────┤ ├────────────┤           │
-│  │ Sign       │ │ Response   │ │ Translator │           │
-│  │ Detection  │ │ Generator  │ │ (EN/TA/HI) │           │
-│  └────────────┘ └────────────┘ └────────────┘           │
-│                  ┌────────────┐                          │
-│                  │ Learning   │ ← Human-in-the-loop     │
-│                  │ Handler    │                          │
-│                  └─────┬──────┘                          │
-└────────────────────────┼─────────────────────────────────┘
-                         │
-┌────────────────────────▼─────────────────────────────────┐
-│  Storage                                                 │
-│  learned_objects.json  •  learned_faces.json  •  faces/  │
-└──────────────────────────────────────────────────────────┘
-```
+### Backend (Python 3.11+)
+- **Flask** — REST API server
+- **OpenCV** — Image processing & face detection
+- **Ultralytics YOLOv8** — Object detection
+- **MediaPipe** — Hand landmark detection
+- **face_recognition** — Face encoding & matching (optional)
+- **DeepFace** — Emotion analysis (optional)
+
+### Frontend (React + Vite)
+- **React 18** — UI framework
+- **Tailwind CSS** — Styling
+- **Axios** — API communication
 
 ---
 
@@ -71,108 +42,70 @@ An AI-powered vision assistant that **sees**, **understands**, **talks**, and **
 ```
 Project LUNA/
 ├── backend/
-│   ├── app.py                         # Flask API server
-│   ├── config.py                      # Configuration settings
-│   ├── requirements.txt               # Python dependencies
-│   │
-│   ├── models/                        # AI detection modules
-│   │   ├── object_detection.py        # YOLO-based detection
-│   │   ├── face_recognition_module.py # Face encoding & matching
-│   │   ├── emotion_detection.py       # Emotion classification
-│   │   └── sign_detection.py          # MediaPipe sign detection
-│   │
-│   ├── learning/                      # Human-in-the-loop learning
-│   │   └── unknown_handler.py         # Manage unknown detections
-│   │
-│   ├── utils/                         # Utilities
+│   ├── app.py                          # Flask app (factory pattern)
+│   ├── config.py                       # Centralized configuration
+│   ├── requirements.txt                # Python dependencies
+│   ├── models/
+│   │   ├── object_detection.py         # YOLOv8 detector
+│   │   ├── face_recognition_module.py  # Face detect + encode + match
+│   │   ├── emotion_detection.py        # DeepFace emotions
+│   │   └── sign_detection.py           # MediaPipe hand gestures
+│   ├── learning/
+│   │   └── unknown_handler.py          # Human-in-the-loop learning
+│   ├── utils/
 │   │   ├── translator.py              # Multi-language translation
 │   │   └── response_generator.py      # Natural language responses
-│   │
-│   ├── storage/                       # Persistent data
-│   │   ├── learned_objects.json
-│   │   ├── learned_faces.json
-│   │   └── faces/                     # Face encoding files
-│   │
+│   ├── storage/
+│   │   ├── faces/                     # Face image crops
+│   │   ├── learned_faces.json         # Known face encodings
+│   │   └── learned_objects.json       # Learned object labels
 │   └── tests/
-│       └── test_api.py                # API tests
-│
-├── frontend/
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   │
-│   ├── public/
-│   │   └── luna-icon.svg              # Moon-themed favicon
-│   │
-│   └── src/
-│       ├── main.jsx                   # Entry point
-│       ├── App.jsx                    # Main app orchestrator
-│       ├── index.css                  # Design system & styles
-│       │
-│       ├── components/
-│       │   ├── Header.jsx             # Status + language selector
-│       │   ├── Sidebar.jsx            # Navigation + detector toggles
-│       │   ├── CameraPreview.jsx      # Webcam feed + overlays
-│       │   ├── ChatWindow.jsx         # Message list + typing indicator
-│       │   ├── ChatMessage.jsx        # Message bubbles + chips
-│       │   ├── ChatInput.jsx          # Text input + detect toggle
-│       │   └── LearningModal.jsx      # Label unknown detections
-│       │
-│       ├── hooks/
-│       │   ├── useCamera.js           # Camera access hook
-│       │   └── useChat.js             # Chat state management
-│       │
-│       ├── services/
-│       │   └── api.js                 # Axios API client
-│       │
-│       └── utils/
-│           └── constants.js           # App constants
-│
-└── README.md
+│       ├── conftest.py                # Shared test fixtures
+│       └── test_api.py               # API test suite (24 tests)
+└── frontend/
+    └── src/                           # React application
 ```
 
 ---
 
-## ⚙️ Prerequisites
+## 🚀 Getting Started
 
-- **Python** 3.9+
-- **Node.js** 18+
-- **CMake** (optional, for `face_recognition` library)
-- **Webcam** (for camera features)
+### Prerequisites
+- Python 3.11.9+ (recommended)
+- Node.js 18+
+- npm or yarn
 
----
-
-## ⚙️ Installation & Setup
-
-### 1. Clone the Repository
+### Backend Setup
 
 ```bash
-git clone https://github.com/suneel2506/Project-Luna-.git
-cd "Project LUNA"
-```
-
-### 2. Backend Setup
-
-```bash
+# Navigate to backend
 cd backend
 
-# Create virtual environment (recommended)
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS/Linux
+# Create & activate virtual environment
+python -m venv ../luna_env
+# Windows:
+..\luna_env\Scripts\activate
+# macOS/Linux:
+source ../luna_env/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Start the server
+# Optional: Install enhanced AI features
+pip install face_recognition    # Requires dlib + CMake
+pip install deepface            # Emotion detection
+pip install googletrans==4.0.0-rc1  # Dynamic translation
+
+# Run the server
 python app.py
 ```
 
-The backend will start at `http://localhost:5000`.
+The backend runs at **http://localhost:5000**.
 
-### 3. Frontend Setup
+### Frontend Setup
 
 ```bash
+# Navigate to frontend
 cd frontend
 
 # Install dependencies
@@ -182,24 +115,24 @@ npm install
 npm run dev
 ```
 
-The frontend will start at `http://localhost:5173`.
+The frontend runs at **http://localhost:5173**.
 
 ---
 
 ## 🔌 API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/status` | Health check — module status, learned items count |
-| `POST` | `/api/process` | Process a camera frame through all AI detectors |
-| `POST` | `/api/learn` | Submit user label for unknown face/object |
-| `GET` | `/api/history` | Get all learned items summary |
-| `GET` | `/api/languages` | Get supported languages |
+|---|---|---|
+| `GET` | `/api/status` | Health check + module status |
+| `POST` | `/api/process` | Process camera frame through all detectors |
+| `POST` | `/api/learn` | Submit user label for unknown detection |
+| `GET` | `/api/history` | Get learned items summary |
+| `GET` | `/api/languages` | List supported languages |
 
-### POST `/api/process`
+### POST /api/process
 
-**Request:**
 ```json
+// Request
 {
   "image": "base64_encoded_image",
   "language": "en",
@@ -210,47 +143,27 @@ The frontend will start at `http://localhost:5173`.
     "signs": true
   }
 }
-```
 
-**Response:**
-```json
+// Response
 {
-  "objects": [{"label": "bottle", "confidence": 0.92, "bbox": [x,y,w,h]}],
-  "faces": [{"name": "Suneel", "location": [t,r,b,l]}],
+  "objects": [{"label": "laptop", "confidence": 0.92, "bbox": [x1,y1,x2,y2]}],
+  "faces": [{"name": "Unknown", "location": [...], "is_unknown": true, "face_id": "face_abc123"}],
   "emotions": [{"emotion": "happy", "confidence": 0.85}],
-  "signs": [{"sign": "hello", "confidence": 0.9}],
-  "unknown_faces": [{"id": "face_001", "crop_base64": "..."}],
-  "message": "I see Suneel looking happy! There's a bottle on the table.",
-  "translations": {
-    "en": "...",
-    "ta": "...",
-    "hi": "..."
-  }
+  "signs": [{"sign": "hello", "confidence": 0.85, "hand": "right"}],
+  "message": "I can see a laptop. I see someone I don't recognize. Who is this?",
+  "translations": {"en": "...", "ta": "...", "hi": "..."}
 }
 ```
 
-### POST `/api/learn`
+### POST /api/learn
 
-**Request:**
 ```json
-{
-  "type": "face",
-  "id": "face_001",
-  "label": "Suneel"
-}
+// Request
+{"type": "face", "id": "face_abc123", "label": "John"}
+
+// Response
+{"success": true, "message": "Got it! I'll remember John from now on. 🧠✨"}
 ```
-
----
-
-## ▶️ Usage
-
-1. Open `http://localhost:5173` in your browser
-2. Click **▶ Start** to activate the camera
-3. Click **🔍 Detect** to begin AI analysis (auto-captures every 2s)
-4. LUNA will respond in the chat with what it sees
-5. If LUNA encounters unknowns, it asks you to label them
-6. Switch languages with the EN/தமிழ்/हிंदி buttons
-7. Toggle individual detectors on/off in the sidebar
 
 ---
 
@@ -258,33 +171,49 @@ The frontend will start at `http://localhost:5173`.
 
 ```bash
 cd backend
-python tests/test_api.py
+python -m pytest tests/ -v
 ```
 
----
-
-## 💡 Future Enhancements
-
-- 🎥 WebSocket streaming for faster detection
-- 🗣️ Voice assistant integration (text-to-speech)
-- ☁️ Cloud deployment (Docker + AWS/GCP)
-- 📱 Mobile app (React Native / Capacitor)
-- 🧠 Fine-tuned custom detection models
+**24 tests** covering all endpoints with valid/invalid inputs.
 
 ---
 
-## 🤝 Contributing
+## 📋 Architecture Highlights
 
-Contributions are welcome! Fork the repo and submit a pull request.
+- **App Factory Pattern** — `create_app()` for clean initialization & testing
+- **Thread-safe AI inference** — Mutex locks on YOLO model and face encodings
+- **Frame-rate throttling** — Server-side rate limiting to prevent overload
+- **Message deduplication** — Suppresses identical messages within time window
+- **Graceful degradation** — Every AI module falls back cleanly when its library is missing
+- **IoU deduplication** — Removes overlapping object detection boxes
+- **Gesture debouncing** — Prevents rapid-fire repeated sign detections
+- **Automatic stale cleanup** — Pending unknowns expire after configurable TTL
 
 ---
 
-## 📜 License
+## 🌐 Supported Languages
+
+| Code | Language | Coverage |
+|---|---|---|
+| `en` | English | Full |
+| `ta` | Tamil | 60+ words/phrases |
+| `hi` | Hindi | 60+ words/phrases |
+
+---
+
+## 🤟 Supported Sign Language Gestures
+
+| Gesture | Sign |
+|---|---|
+| ✋ Open palm | Hello |
+| 👍 Thumbs up | Yes |
+| ✌️ Peace sign | No |
+| 🙏 Flat hand | Thank You |
+| ✊ Closed fist | Help |
+| 🤟 Rock on | I Love You |
+
+---
+
+## 📄 License
 
 This project is for educational purposes.
-
----
-
-## ⭐ Support
-
-If you like this project, give it a ⭐ on GitHub!

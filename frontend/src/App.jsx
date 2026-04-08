@@ -94,7 +94,7 @@ function App() {
         const unknownFace = results.unknown_faces[0];
         setLearningItem({
           type: 'face',
-          id: unknownFace.id,
+          id: unknownFace.face_id,
           crop_base64: unknownFace.crop_base64 || '',
         });
         chat.addLearningMessage(

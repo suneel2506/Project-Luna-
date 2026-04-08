@@ -1,180 +1,209 @@
 """
 Project LUNA — Sign Language Detection Module
+══════════════════════════════════════════════
 Uses MediaPipe for hand landmark detection and rule-based
 gesture classification for a limited sign set.
 
 Supported signs: Hello, Yes, No, Thank You, Help, I Love You
+
+Features:
+  • MediaPipe-backed hand landmark extraction
+  • Improved finger-state detection (left/right aware thumb)
+  • Gesture debouncing — suppress repeated same-sign detections
+  • Proper MediaPipe resource cleanup
 """
 
+from __future__ import annotations
+
 import logging
-import math
-import random
-import sys
-import os
+import time
+from typing import Any
 
-logger = logging.getLogger(__name__)
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import SUPPORTED_SIGNS
+
+logger = logging.getLogger("luna.sign_detection")
+
+# Debounce: minimum seconds between reporting the same sign
+_DEBOUNCE_SECONDS: float = 3.0
 
 
 class SignDetector:
-    """Hand sign/gesture detection using MediaPipe landmarks."""
+    """Hand sign / gesture detection using MediaPipe landmarks."""
 
-    def __init__(self):
-        self.mp_hands = None
-        self.hands = None
-        self.mp_draw = None
-        self.mediapipe_available = False
+    def __init__(self) -> None:
+        self._mp_hands: Any = None
+        self._hands: Any = None
+        self.mediapipe_available: bool = False
+        self._last_signs: dict[str, float] = {}   # sign → last_reported_time
         self._try_load_mediapipe()
 
-    def _try_load_mediapipe(self):
-        """Try to load MediaPipe for hand tracking."""
+    # ── Initialisation ──────────────────────────
+
+    def _try_load_mediapipe(self) -> None:
+        """Attempt to import and configure MediaPipe hands."""
         try:
             import mediapipe as mp
-            self.mp_hands = mp.solutions.hands
-            self.hands = self.mp_hands.Hands(
+            self._mp_hands = mp.solutions.hands
+            self._hands = self._mp_hands.Hands(
                 static_image_mode=True,
                 max_num_hands=2,
                 min_detection_confidence=0.5,
-                min_tracking_confidence=0.5
+                min_tracking_confidence=0.5,
             )
-            self.mp_draw = mp.solutions.drawing_utils
             self.mediapipe_available = True
             logger.info("✅ MediaPipe loaded for sign detection")
-        except (ImportError, AttributeError, Exception) as e:
+        except (ImportError, AttributeError, Exception) as exc:
             self.mediapipe_available = False
-            logger.warning(f"⚠️ MediaPipe not available ({e}). Using placeholder sign detection.")
+            logger.warning("⚠️  MediaPipe not available (%s) — sign detection disabled", exc)
 
-    def detect(self, frame):
+    # ── Public API ──────────────────────────────
+
+    def detect(self, frame) -> list[dict]:
         """
-        Detect hand signs/gestures in a frame.
+        Detect hand signs / gestures in *frame*.
 
-        Args:
-            frame: numpy array (BGR image)
-
-        Returns:
-            list of dicts:
-                - sign (str): Detected sign name
-                - confidence (float): Detection confidence
-                - hand (str): 'left' or 'right'
-                - landmarks (list): Key landmark positions
+        Returns list of dicts:
+            sign        (str)   – gesture name
+            confidence  (float) – 0.0 – 1.0
+            hand        (str)   – 'left' or 'right'
+            landmarks   (list)  – [{x, y, z}, ...]
         """
         if frame is None:
             return []
+        if not self.mediapipe_available:
+            return []
 
-        if self.mediapipe_available:
-            return self._detect_with_mediapipe(frame)
-        else:
-            return self._placeholder_detect()
+        return self._detect_with_mediapipe(frame)
 
-    def _detect_with_mediapipe(self, frame):
-        """Use MediaPipe for real hand gesture detection."""
+    def get_supported_signs(self) -> list[str]:
+        """Return the list of recognizable signs."""
+        return SUPPORTED_SIGNS
+
+    def close(self) -> None:
+        """Release MediaPipe resources."""
+        if self._hands is not None:
+            self._hands.close()
+            logger.debug("MediaPipe hands resources released")
+
+    # ── MediaPipe Detection ─────────────────────
+
+    def _detect_with_mediapipe(self, frame) -> list[dict]:
+        """Run MediaPipe hand detection + gesture classification."""
         import cv2
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(rgb_frame)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self._hands.process(rgb)
 
-        detections = []
+        detections: list[dict] = []
 
-        if results.multi_hand_landmarks and results.multi_handedness:
-            for hand_landmarks, handedness in zip(
-                results.multi_hand_landmarks, results.multi_handedness
-            ):
-                # Get hand label (left/right)
-                hand_label = handedness.classification[0].label.lower()
+        if not results.multi_hand_landmarks or not results.multi_handedness:
+            return detections
 
-                # Extract landmark positions
-                landmarks = []
-                for lm in hand_landmarks.landmark:
-                    landmarks.append({
-                        "x": round(lm.x, 4),
-                        "y": round(lm.y, 4),
-                        "z": round(lm.z, 4)
-                    })
+        now = time.time()
 
-                # Classify the gesture
-                sign, confidence = self._classify_gesture(landmarks)
+        for hand_lm, handedness in zip(
+            results.multi_hand_landmarks,
+            results.multi_handedness,
+        ):
+            hand_label: str = handedness.classification[0].label.lower()
 
-                if sign:
-                    detections.append({
-                        "sign": sign,
-                        "confidence": round(confidence, 2),
-                        "hand": hand_label,
-                        "landmarks": landmarks
-                    })
+            landmarks: list[dict[str, float]] = [
+                {
+                    "x": round(lm.x, 4),
+                    "y": round(lm.y, 4),
+                    "z": round(lm.z, 4),
+                }
+                for lm in hand_lm.landmark
+            ]
+
+            sign, confidence = self._classify_gesture(landmarks, hand_label)
+
+            if sign is None:
+                continue
+
+            # Debounce: skip if same sign was reported recently
+            last_time = self._last_signs.get(sign, 0.0)
+            if (now - last_time) < _DEBOUNCE_SECONDS:
+                continue
+
+            self._last_signs[sign] = now
+            detections.append({
+                "sign": sign,
+                "confidence": round(confidence, 2),
+                "hand": hand_label,
+                "landmarks": landmarks,
+            })
 
         return detections
 
-    def _classify_gesture(self, landmarks):
+    # ── Gesture Classification ──────────────────
+
+    def _classify_gesture(
+        self,
+        landmarks: list[dict[str, float]],
+        hand: str,
+    ) -> tuple[str | None, float]:
         """
         Rule-based gesture classification using finger positions.
 
-        Landmark indices (MediaPipe):
-        0: WRIST
-        4: THUMB_TIP, 3: THUMB_IP, 2: THUMB_MCP
-        8: INDEX_TIP, 7: INDEX_DIP, 6: INDEX_PIP, 5: INDEX_MCP
-        12: MIDDLE_TIP, 11: MIDDLE_DIP, 10: MIDDLE_PIP, 9: MIDDLE_MCP
-        16: RING_TIP, 15: RING_DIP, 14: RING_PIP, 13: RING_MCP
-        20: PINKY_TIP, 19: PINKY_DIP, 18: PINKY_PIP, 17: PINKY_MCP
+        MediaPipe landmark indices:
+            0  WRIST
+            4  THUMB_TIP    3 THUMB_IP    2 THUMB_MCP
+            8  INDEX_TIP    6 INDEX_PIP   5 INDEX_MCP
+           12  MIDDLE_TIP  10 MIDDLE_PIP  9 MIDDLE_MCP
+           16  RING_TIP    14 RING_PIP   13 RING_MCP
+           20  PINKY_TIP   18 PINKY_PIP  17 PINKY_MCP
         """
-        # Get finger states (extended or not)
-        fingers = self._get_finger_states(landmarks)
+        fingers = self._get_finger_states(landmarks, hand)
         thumb, index, middle, ring, pinky = fingers
 
-        # ---- HELLO (Open palm, all fingers extended) ----
-        if all(fingers):
-            return "hello", 0.85
-
-        # ---- YES (Fist with thumb up) ----
-        if thumb and not index and not middle and not ring and not pinky:
-            return "yes", 0.80
-
-        # ---- NO (Index finger wagging / index + middle extended, others closed) ----
-        if index and middle and not ring and not pinky:
-            # Peace/No sign
-            return "no", 0.75
-
-        # ---- THANK YOU (Flat hand moving from chin — simplified: open palm facing up) ----
-        # Approximation: all fingers extended, palm facing camera (z values)
-        if all(fingers) and landmarks[12]["z"] < landmarks[0]["z"]:
-            return "thank_you", 0.70
-
-        # ---- HELP (Fist on open palm — simplified: one hand fist-like) ----
-        if not index and not middle and not ring and not pinky and not thumb:
-            return "help", 0.65
-
-        # ---- I LOVE YOU (thumb + index + pinky extended) ----
+        # I LOVE YOU — thumb + index + pinky extended, middle + ring closed
         if thumb and index and not middle and not ring and pinky:
             return "i_love_you", 0.85
 
+        # HELLO — open palm, all five fingers extended
+        if all(fingers):
+            # Distinguish from "thank_you" by z-depth (palm orientation)
+            if landmarks[12]["z"] < landmarks[0]["z"]:
+                return "thank_you", 0.70
+            return "hello", 0.85
+
+        # YES — fist with thumb up only
+        if thumb and not index and not middle and not ring and not pinky:
+            return "yes", 0.80
+
+        # NO — index + middle extended (peace / no sign), others closed
+        if index and middle and not ring and not pinky:
+            return "no", 0.75
+
+        # HELP — closed fist (all fingers down including thumb)
+        if not thumb and not index and not middle and not ring and not pinky:
+            return "help", 0.65
+
         return None, 0.0
 
-    def _get_finger_states(self, landmarks):
+    def _get_finger_states(
+        self,
+        landmarks: list[dict[str, float]],
+        hand: str,
+    ) -> tuple[bool, bool, bool, bool, bool]:
         """
         Determine which fingers are extended.
 
-        Returns:
-            tuple of 5 bools: (thumb, index, middle, ring, pinky)
+        The thumb check is orientation-aware: on the right hand the
+        extended thumb tip moves left (smaller x), on the left hand
+        it moves right (larger x).
         """
-        # Thumb: compare tip x with IP x (depends on hand orientation)
-        thumb = landmarks[4]["x"] < landmarks[3]["x"]
+        # Thumb — orientation-aware comparison
+        if hand == "right":
+            thumb = landmarks[4]["x"] < landmarks[3]["x"]
+        else:
+            thumb = landmarks[4]["x"] > landmarks[3]["x"]
 
-        # Other fingers: tip y < pip y means extended (image coords, y increases downward)
-        index = landmarks[8]["y"] < landmarks[6]["y"]
+        # Other fingers: tip y < pip y ⟹ extended (image y increases downward)
+        index  = landmarks[8]["y"]  < landmarks[6]["y"]
         middle = landmarks[12]["y"] < landmarks[10]["y"]
-        ring = landmarks[16]["y"] < landmarks[14]["y"]
-        pinky = landmarks[20]["y"] < landmarks[18]["y"]
+        ring   = landmarks[16]["y"] < landmarks[14]["y"]
+        pinky  = landmarks[20]["y"] < landmarks[18]["y"]
 
         return (thumb, index, middle, ring, pinky)
-
-    def _placeholder_detect(self):
-        """
-        Placeholder when MediaPipe is unavailable.
-        Returns empty list — no fake detections.
-        """
-        return []
-
-    def get_supported_signs(self):
-        """Return list of supported sign gestures."""
-        return SUPPORTED_SIGNS

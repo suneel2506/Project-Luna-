@@ -19,12 +19,37 @@ export default function CameraPreview({
 }) {
   const intervalRef = useRef(null);
 
-  // Auto-capture frames when detecting
+  // 🔥 START CAMERA STREAM
+  useEffect(() => {
+    if (isCameraOn && videoRef.current) {
+      async function startCamera() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+          });
+
+          videoRef.current.srcObject = stream;
+        } catch (err) {
+          console.error("Camera error:", err);
+        }
+      }
+
+      startCamera();
+    }
+
+    // 🛑 STOP CAMERA CLEANLY
+    return () => {
+      if (videoRef.current?.srcObject) {
+        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isCameraOn, videoRef]);
+
+  // 🔁 AUTO CAPTURE FRAMES
   useEffect(() => {
     if (isDetecting && isCameraOn) {
-      // Capture immediately
       onCapture();
-      // Then every 2 seconds
+
       intervalRef.current = setInterval(() => {
         onCapture();
       }, 2000);
@@ -38,6 +63,7 @@ export default function CameraPreview({
     };
   }, [isDetecting, isCameraOn, onCapture]);
 
+  // 🎯 BADGES DISPLAY
   const badges = [];
   if (detectionResults) {
     if (detectionResults.objects?.length) {
@@ -79,7 +105,7 @@ export default function CameraPreview({
   }
 
   return (
-    <div className="camera-panel" id="camera-panel">
+    <div className="camera-panel">
       <div className="camera-header">
         <div className="camera-title">
           <span>📷</span>
@@ -88,25 +114,22 @@ export default function CameraPreview({
             <span className="status-dot" style={{ marginLeft: 4 }} />
           )}
         </div>
+
         <div className="camera-controls">
           {!isCameraOn ? (
             <button
               className="cam-btn cam-btn-start"
               onClick={onStartCamera}
-              id="btn-start-camera"
             >
               ▶ Start
             </button>
           ) : (
-            <>
-              <button
-                className="cam-btn cam-btn-stop"
-                onClick={onStopCamera}
-                id="btn-stop-camera"
-              >
-                ⏹ Stop
-              </button>
-            </>
+            <button
+              className="cam-btn cam-btn-stop"
+              onClick={onStopCamera}
+            >
+              ⏹ Stop
+            </button>
           )}
         </div>
       </div>
@@ -120,12 +143,14 @@ export default function CameraPreview({
               autoPlay
               playsInline
               muted
-              id="camera-video"
             />
+
             <canvas ref={canvasRef} className="camera-canvas" />
+
             {badges.length > 0 && (
               <div className="detection-badges">{badges}</div>
             )}
+
             {isProcessing && (
               <div
                 className="detection-badge badge-object"
@@ -144,11 +169,14 @@ export default function CameraPreview({
           <div className="camera-placeholder">
             <div className="camera-placeholder-icon">📷</div>
             <div className="camera-placeholder-text">
-              Click <strong>Start</strong> to activate your camera and begin AI vision detection
+              Click <strong>Start</strong> to activate your camera
             </div>
           </div>
         )}
-        {cameraError && <div className="camera-error">{cameraError}</div>}
+
+        {cameraError && (
+          <div className="camera-error">{cameraError}</div>
+        )}
       </div>
     </div>
   );

@@ -1,48 +1,102 @@
 """
 Project LUNA — Configuration Settings
-Centralized configuration for all modules.
+══════════════════════════════════════
+Centralized configuration for every module in the backend.
+Uses pathlib for cross-platform path handling.
+Requires Python 3.11.9+
 """
 
+from __future__ import annotations
+
 import os
+import sys
+import logging
+from pathlib import Path
 
-# Base directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ──────────────────────────────────────────────
+# Python Version Gate
+# ──────────────────────────────────────────────
+REQUIRED_PYTHON: tuple[int, int, int] = (3, 11, 9)
 
-# Storage paths
-STORAGE_DIR = os.path.join(BASE_DIR, "storage")
-FACES_DIR = os.path.join(STORAGE_DIR, "faces")
-LEARNED_OBJECTS_FILE = os.path.join(STORAGE_DIR, "learned_objects.json")
-LEARNED_FACES_FILE = os.path.join(STORAGE_DIR, "learned_faces.json")
+if sys.version_info < REQUIRED_PYTHON:
+    import warnings
+    warnings.warn(
+        f"Project LUNA recommends Python {'.'.join(map(str, REQUIRED_PYTHON))}+ "
+        f"but found {sys.version}. Some features may not work optimally.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
-# Ensure storage directories exist
-os.makedirs(FACES_DIR, exist_ok=True)
-os.makedirs(STORAGE_DIR, exist_ok=True)
+# ──────────────────────────────────────────────
+# Directory Layout
+# ──────────────────────────────────────────────
+BASE_DIR: Path = Path(__file__).resolve().parent
+STORAGE_DIR: Path = BASE_DIR / "storage"
+FACES_DIR: Path = STORAGE_DIR / "faces"
+LEARNED_OBJECTS_FILE: Path = STORAGE_DIR / "learned_objects.json"
+LEARNED_FACES_FILE: Path = STORAGE_DIR / "learned_faces.json"
 
-# Detection confidence thresholds
-YOLO_CONFIDENCE = 0.45
-FACE_TOLERANCE = 0.6  # Lower = stricter matching
-EMOTION_CONFIDENCE = 0.5
+# Ensure storage directories exist at import time
+FACES_DIR.mkdir(parents=True, exist_ok=True)
 
-# Camera settings
-FRAME_INTERVAL_MS = 2000  # Process frame every 2 seconds
+# ──────────────────────────────────────────────
+# Logging
+# ──────────────────────────────────────────────
+LOG_LEVEL: int = logging.INFO
+LOG_FORMAT: str = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+LOG_DATE_FORMAT: str = "%H:%M:%S"
 
-# Flask settings
-FLASK_HOST = "0.0.0.0"
-FLASK_PORT = 5000
-DEBUG = True
+# ──────────────────────────────────────────────
+# Flask
+# ──────────────────────────────────────────────
+FLASK_HOST: str = os.getenv("LUNA_HOST", "0.0.0.0")
+FLASK_PORT: int = int(os.getenv("LUNA_PORT", "5000"))
+DEBUG: bool = os.getenv("LUNA_DEBUG", "true").lower() in ("1", "true", "yes")
 
-# CORS origins
-CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+CORS_ORIGINS: list[str] = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
-# Model paths
-YOLO_MODEL = "yolov8n.pt"  # Will auto-download on first use
+# ──────────────────────────────────────────────
+# Detection Confidence Thresholds
+# ──────────────────────────────────────────────
+YOLO_CONFIDENCE: float = 0.45
+FACE_TOLERANCE: float = 0.6          # Lower = stricter matching
+EMOTION_CONFIDENCE: float = 0.5
 
-# Sign language gesture set
-SUPPORTED_SIGNS = ["hello", "yes", "no", "thank_you", "help", "i_love_you"]
+# ──────────────────────────────────────────────
+# Model Paths
+# ──────────────────────────────────────────────
+YOLO_MODEL: str = "yolov8n.pt"       # Auto-downloads on first run
 
-# Supported languages
-LANGUAGES = {
+# ──────────────────────────────────────────────
+# Rate Limiting / Throttle
+# ──────────────────────────────────────────────
+MIN_FRAME_INTERVAL_MS: int = 800     # Ignore frames faster than this
+PENDING_TTL_SECONDS: int = 300       # Stale pending items expire after 5 min
+
+# ──────────────────────────────────────────────
+# Conversation Context
+# ──────────────────────────────────────────────
+MAX_CONTEXT_HISTORY: int = 20        # Messages kept in context window
+CONTEXT_TTL_SECONDS: int = 600       # Context expires after 10 min idle
+DEDUP_WINDOW_SECONDS: int = 10       # Suppress duplicate messages within window
+
+# ──────────────────────────────────────────────
+# Sign Language
+# ──────────────────────────────────────────────
+SUPPORTED_SIGNS: list[str] = [
+    "hello", "yes", "no", "thank_you", "help", "i_love_you",
+]
+
+# ──────────────────────────────────────────────
+# Supported Languages
+# ──────────────────────────────────────────────
+LANGUAGES: dict[str, str] = {
     "en": "English",
     "ta": "Tamil",
-    "hi": "Hindi"
+    "hi": "Hindi",
 }

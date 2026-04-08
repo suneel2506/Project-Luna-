@@ -21,6 +21,7 @@ function createMessage(type, content, extra = {}) {
 export function useChat() {
   const [messages, setMessages] = useState([
     createMessage(MESSAGE_TYPES.SYSTEM, '🌙 Welcome to LUNA — your AI Vision Assistant! Start your camera and begin detecting.'),
+    createMessage(MESSAGE_TYPES.AI, "Hello! I'm **LUNA** 🌙 — your AI Vision Assistant. I can detect objects, recognize faces, read emotions, and understand sign language. Start your camera and click 🔍 **Detect** to see me in action! Type **help** anytime to learn more."),
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const scrollRef = useRef(null);

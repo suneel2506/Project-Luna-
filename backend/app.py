@@ -1,36 +1,40 @@
 """
 Project LUNA — Flask Application
+═════════════════════════════════
 Main API server for the Interactive AI Vision Assistant.
+Requires Python 3.11.9+
 
 Endpoints:
     POST /api/process   → Process a camera frame through all detectors
     POST /api/learn     → Submit user label for unknown detection
-    GET  /api/status    → Health check
-    GET  /api/history   → Get learned items summary
+    GET  /api/status    → Health check / module status
+    GET  /api/history   → Learned items summary
+    GET  /api/languages → Supported languages list
 """
+
+from __future__ import annotations
 
 import base64
 import logging
 import sys
-import os
-import numpy as np
-import cv2
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import time
 from datetime import datetime
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S"
+import cv2
+import numpy as np
+from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
+
+from config import (
+    FLASK_HOST,
+    FLASK_PORT,
+    DEBUG,
+    CORS_ORIGINS,
+    LOG_LEVEL,
+    LOG_FORMAT,
+    LOG_DATE_FORMAT,
+    MIN_FRAME_INTERVAL_MS,
 )
-logger = logging.getLogger("LUNA")
-
-# Add backend to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from config import FLASK_HOST, FLASK_PORT, DEBUG, CORS_ORIGINS
 from models.object_detection import ObjectDetector
 from models.face_recognition_module import FaceRecognizer
 from models.emotion_detection import EmotionDetector
@@ -39,290 +43,377 @@ from learning.unknown_handler import UnknownHandler
 from utils.translator import Translator
 from utils.response_generator import ResponseGenerator
 
-# ---- Initialize Flask App ----
-app = Flask(__name__)
-CORS(app, origins=CORS_ORIGINS)
 
-# ---- Initialize Modules ----
-logger.info("🌙 Initializing LUNA modules...")
+# ════════════════════════════════════════════════
+# Logging
+# ════════════════════════════════════════════════
 
-object_detector = ObjectDetector()
-face_recognizer = FaceRecognizer()
-emotion_detector = EmotionDetector()
-sign_detector = SignDetector()
-unknown_handler = UnknownHandler()
-translator = Translator()
-response_generator = ResponseGenerator()
-
-logger.info("✅ All LUNA modules initialized!")
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format=LOG_FORMAT,
+    datefmt=LOG_DATE_FORMAT,
+)
+logger = logging.getLogger("LUNA")
 
 
-def decode_base64_image(b64_string):
-    """Decode a base64 image string to a numpy array (BGR)."""
-    try:
-        # Remove data URL prefix if present
-        if "," in b64_string:
-            b64_string = b64_string.split(",")[1]
+# ════════════════════════════════════════════════
+# Application Factory
+# ════════════════════════════════════════════════
 
-        img_bytes = base64.b64decode(b64_string)
-        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        return frame
-    except Exception as e:
-        logger.error(f"Failed to decode image: {e}")
-        return None
+def create_app() -> Flask:
+    """Create, configure, and return the Flask application."""
 
+    app = Flask(__name__)
 
-# ============================================================
-# API ENDPOINTS
-# ============================================================
+    # ── CORS ──
+    CORS(app, origins=CORS_ORIGINS)
 
-@app.route("/api/status", methods=["GET"])
-def status():
-    """Health check endpoint."""
-    return jsonify({
-        "status": "online",
-        "name": "LUNA — AI Vision Assistant",
-        "version": "1.0.0",
-        "timestamp": datetime.now().isoformat(),
-        "modules": {
-            "object_detection": "yolo" if object_detector.model else "placeholder",
-            "face_recognition": "encoding" if face_recognizer.face_rec_available else "cascade",
-            "emotion_detection": "deepface" if emotion_detector.deepface_available else "placeholder",
-            "sign_detection": "mediapipe" if sign_detector.mediapipe_available else "placeholder",
-        },
-        "learned": unknown_handler.get_learned_summary()
-    })
+    # ── Initialise AI modules ──
+    logger.info("🌙 Initializing LUNA modules...")
+    modules = _init_modules()
+    app.config["LUNA_MODULES"] = modules
+    logger.info("✅ All LUNA modules initialized!")
+
+    # ── Frame-rate throttle state ──
+    app.config["_last_process_time"] = 0.0
+
+    # ── Register routes ──
+    _register_routes(app, modules)
+
+    # ── Register error handlers ──
+    _register_error_handlers(app)
+
+    return app
 
 
-@app.route("/api/process", methods=["POST"])
-def process_frame():
-    """
-    Process a camera frame through all AI detectors.
+# ════════════════════════════════════════════════
+# Module Initialisation
+# ════════════════════════════════════════════════
 
-    Expects JSON body:
-        {
-            "image": "base64_encoded_image",
-            "language": "en" | "ta" | "hi",
-            "detectors": {
-                "objects": true,
-                "faces": true,
-                "emotions": true,
-                "signs": true
+class _Modules:
+    """Simple container so we can pass all modules around easily."""
+
+    __slots__ = (
+        "object_detector",
+        "face_recognizer",
+        "emotion_detector",
+        "sign_detector",
+        "unknown_handler",
+        "translator",
+        "response_generator",
+    )
+
+    def __init__(self) -> None:
+        self.object_detector = ObjectDetector()
+        self.face_recognizer = FaceRecognizer()
+        self.emotion_detector = EmotionDetector()
+        self.sign_detector = SignDetector()
+        self.unknown_handler = UnknownHandler()
+        self.translator = Translator()
+        self.response_generator = ResponseGenerator()
+
+
+def _init_modules() -> _Modules:
+    return _Modules()
+
+
+# ════════════════════════════════════════════════
+# Route Registration
+# ════════════════════════════════════════════════
+
+def _register_routes(app: Flask, m: _Modules) -> None:
+    """Attach all API endpoints to *app*."""
+
+    # ────────────────────────────────────────────
+    # GET /api/status
+    # ────────────────────────────────────────────
+    @app.route("/api/status", methods=["GET"])
+    def status() -> Response:
+        """Health check with module availability info."""
+        return jsonify({
+            "status": "online",
+            "name": "LUNA — AI Vision Assistant",
+            "version": "2.0.0",
+            "python_version": sys.version,
+            "timestamp": datetime.now().isoformat(),
+            "modules": {
+                "object_detection": "yolo" if m.object_detector.model else "placeholder",
+                "face_recognition": (
+                    "encoding" if m.face_recognizer.face_rec_available else "cascade"
+                ),
+                "emotion_detection": (
+                    "deepface" if m.emotion_detector.deepface_available else "placeholder"
+                ),
+                "sign_detection": (
+                    "mediapipe" if m.sign_detector.mediapipe_available else "placeholder"
+                ),
+            },
+            "learned": m.unknown_handler.get_learned_summary(),
+        })
+
+    # ────────────────────────────────────────────
+    # POST /api/process
+    # ────────────────────────────────────────────
+    @app.route("/api/process", methods=["POST"])
+    def process_frame() -> tuple[Response, int] | Response:
+        """
+        Process a camera frame through all AI detectors.
+
+        Expects JSON:
+            {
+                "image": "base64_encoded_image",
+                "language": "en" | "ta" | "hi",
+                "detectors": {
+                    "objects": true,
+                    "faces": true,
+                    "emotions": true,
+                    "signs": true
+                }
             }
-        }
+        """
+        # ── Frame-rate throttle ──
+        now = time.time()
+        last = app.config.get("_last_process_time", 0.0)
+        if (now - last) * 1000 < MIN_FRAME_INTERVAL_MS:
+            return jsonify({"skipped": True, "reason": "throttled"}), 429
 
-    Returns:
-        {
-            "objects": [...],
-            "faces": [...],
-            "emotions": [...],
-            "signs": [...],
-            "unknown_faces": [...],
-            "message": "...",
-            "translations": {"en": "...", "ta": "...", "hi": "..."},
-            "timestamp": "..."
-        }
-    """
-    try:
-        data = request.get_json()
+        app.config["_last_process_time"] = now
 
+        # ── Parse request ──
+        data = request.get_json(silent=True)
         if not data or "image" not in data:
             return jsonify({"error": "No image data provided"}), 400
 
-        # Decode the image
-        frame = decode_base64_image(data["image"])
+        frame = _decode_base64_image(data["image"])
         if frame is None:
             return jsonify({"error": "Failed to decode image"}), 400
 
-        language = data.get("language", "en")
-        detectors = data.get("detectors", {
+        language: str = data.get("language", "en")
+        detectors: dict = data.get("detectors", {
             "objects": True,
             "faces": True,
             "emotions": True,
-            "signs": True
+            "signs": True,
         })
 
-        # ---- Run detectors ----
-        results = {
+        # ── Run detectors ──
+        results: dict = {
             "objects": [],
             "faces": [],
             "emotions": [],
             "signs": [],
             "unknown_faces": [],
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
         # Object Detection
         if detectors.get("objects", True):
-            results["objects"] = object_detector.detect(frame)
+            results["objects"] = m.object_detector.detect(frame)
 
         # Face Recognition
-        face_results = {"faces": [], "unknown_faces": []}
+        face_results: dict = {"faces": [], "unknown_faces": []}
         if detectors.get("faces", True):
-            face_results = face_recognizer.detect(frame)
+            face_results = m.face_recognizer.detect(frame)
             results["faces"] = face_results.get("faces", [])
             results["unknown_faces"] = face_results.get("unknown_faces", [])
 
-            # Flag unknown faces for learning
+            # Flag unknown faces for the learning system (keep IDs in sync)
             for uf in results["unknown_faces"]:
-                unknown_handler.flag_unknown_face(
-                    encoding=uf.get("encoding", []),
-                    crop_b64=uf.get("crop_base64", "")
+                face_id = uf.get("face_id")
+                encoding = m.face_recognizer.get_pending_encoding(face_id)
+                m.unknown_handler.flag_unknown_face_with_id(
+                    face_id=face_id,
+                    encoding=encoding if encoding is not None else [],
+                    crop_b64=uf.get("crop_base64", ""),
                 )
 
         # Emotion Detection
         if detectors.get("emotions", True):
-            face_locations = [
+            face_locs = [
                 f["location"] for f in results["faces"]
             ] if results["faces"] else None
-            results["emotions"] = emotion_detector.detect(frame, face_locations)
+            results["emotions"] = m.emotion_detector.detect(frame, face_locs)
 
         # Sign Language Detection
         if detectors.get("signs", True):
-            results["signs"] = sign_detector.detect(frame)
+            results["signs"] = m.sign_detector.detect(frame)
 
-        # ---- Generate response message ----
-        message = response_generator.generate(
+        # ── Generate response message ──
+        message: str = m.response_generator.generate(
             objects=results["objects"],
             faces=face_results,
             emotions=results["emotions"],
-            signs=results["signs"]
+            signs=results["signs"],
         )
         results["message"] = message
 
-        # ---- Translate ----
+        # ── Translations ──
         results["translations"] = {
             "en": message,
-            "ta": translator.translate_message(message, "ta"),
-            "hi": translator.translate_message(message, "hi"),
+            "ta": m.translator.translate_message(message, "ta"),
+            "hi": m.translator.translate_message(message, "hi"),
         }
 
-        # ---- Add translated labels if requested language isn't English ----
+        # Add translated labels if requested language isn't English
         if language != "en":
-            translated = translator.translate_detection_results(results, language)
+            translated = m.translator.translate_detection_results(results, language)
             results.update(translated)
 
-        # Clean response for JSON serialization
+        # ── Serialise & respond ──
         _clean_for_json(results)
-
         return jsonify(results)
 
-    except Exception as e:
-        logger.error(f"Processing error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    # ────────────────────────────────────────────
+    # POST /api/learn
+    # ────────────────────────────────────────────
+    @app.route("/api/learn", methods=["POST"])
+    def learn() -> tuple[Response, int] | Response:
+        """
+        Accept a user-provided label for an unknown detection.
 
-
-@app.route("/api/learn", methods=["POST"])
-def learn():
-    """
-    Accept user label for unknown detection.
-
-    Expects JSON body:
-        {
-            "type": "face" | "object",
-            "id": "face_xxxx" | "obj_xxxx",
-            "label": "User provided name/label"
-        }
-
-    Returns:
-        {
-            "success": true,
-            "message": "Confirmation message",
-            "learned_summary": {...}
-        }
-    """
-    try:
-        data = request.get_json()
-
+        Expects JSON:
+            {
+                "type": "face" | "object",
+                "id": "face_xxxx" | "obj_xxxx",
+                "label": "User provided name/label"
+            }
+        """
+        data = request.get_json(silent=True)
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
-        item_type = data.get("type")
-        item_id = data.get("id")
-        label = data.get("label", "").strip()
+        item_type: str = data.get("type", "")
+        item_id: str | None = data.get("id")
+        label: str = data.get("label", "").strip()
 
         if not item_type or not label:
             return jsonify({"error": "Missing 'type' or 'label'"}), 400
 
-        success = False
+        success: bool = False
 
-        if item_type == "face":
-            # Learn the face
-            result = unknown_handler.learn_face(item_id, label)
-            if result["success"] and result["encoding"]:
-                # Also update face recognizer's known faces
-                face_recognizer.learn_face(item_id, label)
-            success = result["success"]
+        match item_type:
+            case "face":
+                result = m.unknown_handler.learn_face(item_id, label)
+                if result["success"] and result["encoding"]:
+                    m.face_recognizer.add_known_face(label, result["encoding"])
+                success = result["success"]
 
-        elif item_type == "object":
-            success = unknown_handler.learn_object(item_id, label)
-            if success:
-                object_detector.reload_learned_objects()
+            case "object":
+                success = m.unknown_handler.learn_object(item_id, label)
+                if success:
+                    m.object_detector.reload_learned_objects()
 
-        else:
-            return jsonify({"error": "Invalid type. Use 'face' or 'object'"}), 400
+            case _:
+                return jsonify({"error": "Invalid type. Use 'face' or 'object'"}), 400
 
         if success:
-            message = response_generator.generate_learning_response(item_type, label)
+            message = m.response_generator.generate_learning_response(item_type, label)
             return jsonify({
                 "success": True,
                 "message": message,
-                "learned_summary": unknown_handler.get_learned_summary()
+                "learned_summary": m.unknown_handler.get_learned_summary(),
             })
-        else:
-            return jsonify({
-                "success": False,
-                "message": f"Could not learn {item_type}. ID may have expired.",
-            }), 404
 
-    except Exception as e:
-        logger.error(f"Learning error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "message": f"Could not learn {item_type}. ID may have expired.",
+        }), 404
+
+    # ────────────────────────────────────────────
+    # GET /api/history
+    # ────────────────────────────────────────────
+    @app.route("/api/history", methods=["GET"])
+    def history() -> Response:
+        """Summary of all learned items."""
+        return jsonify(m.unknown_handler.get_learned_summary())
+
+    # ────────────────────────────────────────────
+    # GET /api/languages
+    # ────────────────────────────────────────────
+    @app.route("/api/languages", methods=["GET"])
+    def languages() -> Response:
+        """Supported languages."""
+        return jsonify(m.translator.get_supported_languages())
 
 
-@app.route("/api/history", methods=["GET"])
-def history():
-    """Get summary of all learned items."""
-    return jsonify(unknown_handler.get_learned_summary())
+# ════════════════════════════════════════════════
+# Error Handlers
+# ════════════════════════════════════════════════
+
+def _register_error_handlers(app: Flask) -> None:
+    """Global JSON error handlers."""
+
+    @app.errorhandler(400)
+    def bad_request(error):
+        return jsonify({"error": "Bad request", "detail": str(error)}), 400
+
+    @app.errorhandler(404)
+    def not_found(error):
+        return jsonify({"error": "Not found"}), 404
+
+    @app.errorhandler(500)
+    def internal_error(error):
+        logger.error("Internal server error: %s", error, exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
 
 
-@app.route("/api/languages", methods=["GET"])
-def languages():
-    """Get supported languages."""
-    return jsonify(translator.get_supported_languages())
+# ════════════════════════════════════════════════
+# Helpers
+# ════════════════════════════════════════════════
+
+def _decode_base64_image(b64_string: str) -> np.ndarray | None:
+    """Decode a base64-encoded image (with optional data-URL prefix) to BGR ndarray."""
+    try:
+        if "," in b64_string:
+            b64_string = b64_string.split(",", 1)[1]
+
+        img_bytes = base64.b64decode(b64_string)
+        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        return frame
+    except Exception as exc:
+        logger.error("Failed to decode image: %s", exc)
+        return None
 
 
 def _clean_for_json(obj):
-    """Recursively clean numpy types for JSON serialization."""
-    if isinstance(obj, dict):
-        for key in obj:
-            obj[key] = _clean_for_json(obj[key])
-    elif isinstance(obj, list):
-        for i in range(len(obj)):
-            obj[i] = _clean_for_json(obj[i])
-    elif isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
+    """Recursively convert numpy types to native Python for JSON serialisation."""
+    match obj:
+        case dict():
+            for key in obj:
+                obj[key] = _clean_for_json(obj[key])
+        case list():
+            for i in range(len(obj)):
+                obj[i] = _clean_for_json(obj[i])
+        case np.integer():
+            return int(obj)
+        case np.floating():
+            return float(obj)
+        case np.ndarray():
+            return obj.tolist()
     return obj
 
 
-# ============================================================
-# MAIN
-# ============================================================
+# ════════════════════════════════════════════════
+# Entrypoint
+# ════════════════════════════════════════════════
+
+app = create_app()
 
 if __name__ == "__main__":
-    logger.info(f"""
-    ╔══════════════════════════════════════╗
-    ║  🌙 LUNA — AI Vision Assistant      ║
-    ║  Running on {FLASK_HOST}:{FLASK_PORT}            ║
-    ╚══════════════════════════════════════╝
-    """)
+    logger.info(
+        "\n"
+        "    ╔══════════════════════════════════════╗\n"
+        "    ║  🌙 LUNA — AI Vision Assistant v2.0  ║\n"
+        "    ║  Python %-28s ║\n"
+        "    ║  Running on %s:%-18d ║\n"
+        "    ╚══════════════════════════════════════╝",
+        sys.version.split()[0],
+        FLASK_HOST,
+        FLASK_PORT,
+    )
     app.run(
         host=FLASK_HOST,
         port=FLASK_PORT,
-        debug=DEBUG
+        debug=DEBUG,
     )

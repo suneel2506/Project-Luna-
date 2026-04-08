@@ -1,145 +1,221 @@
 """
 Project LUNA — Emotion Detection Module
-Detects facial emotions using deepface or a lightweight fallback.
-Supported emotions: happy, sad, angry, neutral, surprise, fear, disgust.
+════════════════════════════════════════
+Detects facial emotions using DeepFace when available, otherwise
+returns an empty result (no fake placeholder data).
+
+Supported emotions: happy, sad, angry, neutral, surprise, fear, disgust
+
+Features:
+  • DeepFace integration with enforce_detection=False for robustness
+  • Per-region and full-frame analysis modes
+  • Emotion result caching to avoid redundant analysis on similar crops
+  • Clean fallback when DeepFace is not installed
 """
 
+from __future__ import annotations
+
 import logging
-import random
+import hashlib
+from typing import Any
+
 import cv2
-import sys
-import os
+import numpy as np
 
-logger = logging.getLogger(__name__)
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import EMOTION_CONFIDENCE
+
+logger = logging.getLogger("luna.emotion_detection")
+
+# Simple LRU-ish cache: (frame_hash, region) → result
+_CACHE_MAX: int = 32
 
 
 class EmotionDetector:
-    """Facial emotion detection with deepface or placeholder fallback."""
+    """Facial emotion detection backed by DeepFace."""
 
-    EMOTIONS = ["happy", "sad", "angry", "neutral", "surprise", "fear", "disgust"]
+    EMOTIONS: list[str] = [
+        "happy", "sad", "angry", "neutral", "surprise", "fear", "disgust",
+    ]
 
-    def __init__(self):
-        self.deepface_available = False
+    def __init__(self) -> None:
+        self.deepface_available: bool = False
+        self._deepface: Any = None
+        self._cache: dict[str, list[dict]] = {}
         self._try_load_deepface()
 
-    def _try_load_deepface(self):
-        """Try to load deepface for emotion analysis."""
+    # ── Initialisation ──────────────────────────
+
+    def _try_load_deepface(self) -> None:
+        """Attempt to import DeepFace for emotion analysis."""
         try:
             from deepface import DeepFace
-            self.DeepFace = DeepFace
+            self._deepface = DeepFace
             self.deepface_available = True
             logger.info("✅ DeepFace loaded for emotion detection")
         except ImportError:
-            self.DeepFace = None
-            self.deepface_available = False
-            logger.warning("⚠️ deepface not installed. Using placeholder emotion detection.")
+            logger.warning("⚠️  deepface not installed — emotion detection disabled")
 
-    def detect(self, frame, face_locations=None):
+    # ── Public API ──────────────────────────────
+
+    def detect(
+        self,
+        frame: np.ndarray | None,
+        face_locations: list[list[int]] | None = None,
+    ) -> list[dict]:
         """
-        Detect emotions in faces within the frame.
+        Detect emotions in faces within *frame*.
 
         Args:
-            frame: numpy array (BGR image)
-            face_locations: optional list of [x1, y1, x2, y2] face bounding boxes.
-                          If provided, analyzes only those regions.
+            frame:          BGR numpy array from OpenCV
+            face_locations: Optional list of [x1, y1, x2, y2] bounding boxes.
+                            When provided, only those regions are analysed.
 
         Returns:
-            list of dicts:
-                - emotion (str): Dominant emotion
-                - confidence (float): Confidence score
-                - location (list): Face bounding box [x1, y1, x2, y2]
-                - all_emotions (dict): All emotion scores
+            List of dicts with keys:
+                emotion       (str)   – dominant emotion name
+                confidence    (float) – 0.0 – 1.0
+                location      (list)  – [x1, y1, x2, y2]
+                all_emotions  (dict)  – {emotion_name: confidence, ...}
         """
-        if frame is None:
+        if frame is None or frame.size == 0:
+            return []
+        if not self.deepface_available:
             return []
 
-        if self.deepface_available:
-            return self._detect_with_deepface(frame, face_locations)
-        else:
-            return self._placeholder_detect(frame, face_locations)
+        return self._analyse(frame, face_locations)
 
-    def _detect_with_deepface(self, frame, face_locations=None):
-        """Use DeepFace for real emotion detection."""
-        results = []
+    # ── DeepFace Analysis ───────────────────────
+
+    def _analyse(
+        self,
+        frame: np.ndarray,
+        face_locations: list[list[int]] | None,
+    ) -> list[dict]:
+        """Run emotion analysis with DeepFace."""
+        results: list[dict] = []
 
         try:
             if face_locations:
-                # Analyze specific face regions
+                # Analyse specific face crops
                 for loc in face_locations:
                     x1, y1, x2, y2 = loc
-                    face_crop = frame[y1:y2, x1:x2]
-
-                    if face_crop.size == 0:
+                    crop = frame[y1:y2, x1:x2]
+                    if crop.size == 0:
                         continue
 
-                    try:
-                        analysis = self.DeepFace.analyze(
-                            face_crop,
-                            actions=["emotion"],
-                            enforce_detection=False,
-                            silent=True
-                        )
-
-                        if isinstance(analysis, list):
-                            analysis = analysis[0]
-
-                        dominant = analysis.get("dominant_emotion", "neutral")
-                        emotions = analysis.get("emotion", {})
-
-                        results.append({
-                            "emotion": dominant,
-                            "confidence": round(emotions.get(dominant, 0) / 100, 2),
-                            "location": loc,
-                            "all_emotions": {
-                                k: round(v / 100, 2) for k, v in emotions.items()
-                            }
-                        })
-                    except Exception as e:
-                        logger.debug(f"Emotion analysis failed for face region: {e}")
+                    parsed = self._analyse_crop(crop, loc)
+                    if parsed:
+                        results.append(parsed)
             else:
-                # Analyze entire frame
-                try:
-                    analysis = self.DeepFace.analyze(
-                        frame,
-                        actions=["emotion"],
-                        enforce_detection=False,
-                        silent=True
-                    )
+                # Full-frame analysis — DeepFace finds faces internally
+                results = self._analyse_full_frame(frame)
 
-                    if isinstance(analysis, list):
-                        for face in analysis:
-                            dominant = face.get("dominant_emotion", "neutral")
-                            emotions = face.get("emotion", {})
-                            region = face.get("region", {})
-
-                            results.append({
-                                "emotion": dominant,
-                                "confidence": round(emotions.get(dominant, 0) / 100, 2),
-                                "location": [
-                                    region.get("x", 0),
-                                    region.get("y", 0),
-                                    region.get("x", 0) + region.get("w", 0),
-                                    region.get("y", 0) + region.get("h", 0)
-                                ],
-                                "all_emotions": {
-                                    k: round(v / 100, 2) for k, v in emotions.items()
-                                }
-                            })
-                except Exception as e:
-                    logger.debug(f"Full frame emotion analysis failed: {e}")
-
-        except Exception as e:
-            logger.error(f"Emotion detection error: {e}")
-            return self._placeholder_detect(frame, face_locations)
+        except Exception as exc:
+            logger.error("Emotion detection error: %s", exc)
 
         return results
 
-    def _placeholder_detect(self, frame, face_locations=None):
-        """
-        Placeholder when deepface is unavailable.
-        Returns empty list — no fake detections.
-        """
-        return []
+    def _analyse_crop(self, crop: np.ndarray, location: list[int]) -> dict | None:
+        """Analyse a single face crop and return structured result."""
+        # Check cache
+        cache_key = self._frame_hash(crop)
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            if cached:
+                result = cached[0].copy()
+                result["location"] = location
+                return result
+
+        try:
+            analysis = self._deepface.analyze(
+                crop,
+                actions=["emotion"],
+                enforce_detection=False,
+                silent=True,
+            )
+
+            if isinstance(analysis, list):
+                analysis = analysis[0]
+
+            dominant: str = analysis.get("dominant_emotion", "neutral")
+            emotions: dict = analysis.get("emotion", {})
+            confidence = emotions.get(dominant, 0) / 100.0
+
+            if confidence < EMOTION_CONFIDENCE:
+                return None
+
+            result = {
+                "emotion": dominant,
+                "confidence": round(confidence, 2),
+                "location": location,
+                "all_emotions": {
+                    k: round(v / 100.0, 2) for k, v in emotions.items()
+                },
+            }
+
+            # Update cache
+            self._cache_put(cache_key, [result])
+            return result
+
+        except Exception as exc:
+            logger.debug("Emotion analysis failed for crop: %s", exc)
+            return None
+
+    def _analyse_full_frame(self, frame: np.ndarray) -> list[dict]:
+        """Analyse the entire frame — DeepFace handles face finding."""
+        try:
+            analysis = self._deepface.analyze(
+                frame,
+                actions=["emotion"],
+                enforce_detection=False,
+                silent=True,
+            )
+
+            if not isinstance(analysis, list):
+                analysis = [analysis]
+
+            results: list[dict] = []
+            for face in analysis:
+                dominant: str = face.get("dominant_emotion", "neutral")
+                emotions: dict = face.get("emotion", {})
+                region: dict = face.get("region", {})
+
+                confidence = emotions.get(dominant, 0) / 100.0
+                if confidence < EMOTION_CONFIDENCE:
+                    continue
+
+                results.append({
+                    "emotion": dominant,
+                    "confidence": round(confidence, 2),
+                    "location": [
+                        region.get("x", 0),
+                        region.get("y", 0),
+                        region.get("x", 0) + region.get("w", 0),
+                        region.get("y", 0) + region.get("h", 0),
+                    ],
+                    "all_emotions": {
+                        k: round(v / 100.0, 2) for k, v in emotions.items()
+                    },
+                })
+
+            return results
+
+        except Exception as exc:
+            logger.debug("Full-frame emotion analysis failed: %s", exc)
+            return []
+
+    # ── Caching Helpers ─────────────────────────
+
+    @staticmethod
+    def _frame_hash(img: np.ndarray) -> str:
+        """Fast perceptual hash: downsample + md5."""
+        small = cv2.resize(img, (16, 16))
+        return hashlib.md5(small.tobytes()).hexdigest()
+
+    def _cache_put(self, key: str, value: list[dict]) -> None:
+        """Insert into cache, evicting oldest when full."""
+        if len(self._cache) >= _CACHE_MAX:
+            # Pop the first key (oldest insertion)
+            oldest = next(iter(self._cache))
+            del self._cache[oldest]
+        self._cache[key] = value
