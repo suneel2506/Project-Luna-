@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+luna_env/
+venv/
+env/
+__pycache__/
+*.pyc
+node_modules/
+.env
