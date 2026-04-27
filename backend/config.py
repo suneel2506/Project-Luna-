@@ -32,12 +32,30 @@ if sys.version_info < REQUIRED_PYTHON:
 # ──────────────────────────────────────────────
 BASE_DIR: Path = Path(__file__).resolve().parent
 STORAGE_DIR: Path = BASE_DIR / "storage"
-FACES_DIR: Path = STORAGE_DIR / "faces"
-LEARNED_OBJECTS_FILE: Path = STORAGE_DIR / "learned_objects.json"
-LEARNED_FACES_FILE: Path = STORAGE_DIR / "learned_faces.json"
 
-# Ensure storage directories exist at import time
-FACES_DIR.mkdir(parents=True, exist_ok=True)
+# ── Per-Module Storage ──
+# Faces
+FACES_DIR: Path = STORAGE_DIR / "faces"
+FACE_IMAGES_DIR: Path = FACES_DIR / "images"        # {name}/*.jpg crops
+LBPH_MODEL_FILE: Path = FACES_DIR / "lbph_model.yml"
+FACE_LABELS_FILE: Path = FACES_DIR / "labels.json"  # {id: name} mapping
+LEARNED_FACES_FILE: Path = FACES_DIR / "learned_faces.json"
+
+# Objects
+OBJECTS_DIR: Path = STORAGE_DIR / "objects"
+LEARNED_OBJECTS_FILE: Path = OBJECTS_DIR / "learned.json"
+
+# Emotions
+EMOTIONS_DIR: Path = STORAGE_DIR / "emotions"
+EMOTION_HISTORY_FILE: Path = EMOTIONS_DIR / "history.json"
+
+# Signs
+SIGNS_DIR: Path = STORAGE_DIR / "signs"
+SIGN_HISTORY_FILE: Path = SIGNS_DIR / "history.json"
+
+# Ensure all storage directories exist at import time
+for _dir in (FACE_IMAGES_DIR, OBJECTS_DIR, EMOTIONS_DIR, SIGNS_DIR):
+    _dir.mkdir(parents=True, exist_ok=True)
 
 # ──────────────────────────────────────────────
 # Logging
@@ -63,9 +81,10 @@ CORS_ORIGINS: list[str] = [
 # ──────────────────────────────────────────────
 # Detection Confidence Thresholds
 # ──────────────────────────────────────────────
-YOLO_CONFIDENCE: float = 0.45
+YOLO_CONFIDENCE: float = 0.35        # Lowered from 0.45 for better detection
 FACE_TOLERANCE: float = 0.6          # Lower = stricter matching
-EMOTION_CONFIDENCE: float = 0.5
+LBPH_CONFIDENCE_THRESHOLD: float = 80.0  # LBPH: lower = better match
+EMOTION_CONFIDENCE: float = 0.4      # Lowered from 0.5
 
 # ──────────────────────────────────────────────
 # Model Paths
@@ -75,7 +94,7 @@ YOLO_MODEL: str = "yolov8n.pt"       # Auto-downloads on first run
 # ──────────────────────────────────────────────
 # Rate Limiting / Throttle
 # ──────────────────────────────────────────────
-MIN_FRAME_INTERVAL_MS: int = 800     # Ignore frames faster than this
+MIN_FRAME_INTERVAL_MS: int = 500     # Ignore frames faster than this
 PENDING_TTL_SECONDS: int = 300       # Stale pending items expire after 5 min
 
 # ──────────────────────────────────────────────

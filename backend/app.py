@@ -294,8 +294,9 @@ def _register_routes(app: Flask, m: _Modules) -> None:
         match item_type:
             case "face":
                 result = m.unknown_handler.learn_face(item_id, label)
-                if result["success"] and result["encoding"]:
-                    m.face_recognizer.add_known_face(label, result["encoding"])
+                if result["success"]:
+                    # Use LBPH-based learning: save crop + retrain model
+                    m.face_recognizer.learn_face_from_pending(item_id, label)
                 success = result["success"]
 
             case "object":

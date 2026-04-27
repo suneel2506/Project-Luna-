@@ -1,6 +1,9 @@
 /**
  * Project LUNA — useCamera Hook
  * Custom hook for webcam access and frame capture.
+ *
+ * Handles React StrictMode double-mount gracefully by re-syncing
+ * the video element with any existing stream after re-mount.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -13,6 +16,65 @@ export function useCamera() {
   const [cameraError, setCameraError] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
 
+  // ── Helper: attach a stream to the current video element ──
+  const attachStream = useCallback(async (stream) => {
+    const video = videoRef.current;
+    if (!video || !stream) return false;
+
+    // Already attached to this exact element — just make sure it's playing
+    if (video.srcObject === stream) {
+      if (video.paused) {
+        try { await video.play(); } catch { /* ignore */ }
+      }
+      return true;
+    }
+
+    video.srcObject = stream;
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Camera stream timeout — try refreshing the page.'));
+      }, 10000);
+
+      // If metadata is already available (re-mount scenario), resolve immediately
+      if (video.readyState >= 1) {
+        clearTimeout(timeout);
+        video.play().then(resolve).catch(reject);
+        return;
+      }
+
+      video.onloadedmetadata = () => {
+        clearTimeout(timeout);
+        video.play().then(resolve).catch(reject);
+      };
+
+      video.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error('Video element error'));
+      };
+    });
+
+    return true;
+  }, []);
+
+  // ── Re-sync effect: if we already have a live stream but the video
+  //    element changed (React StrictMode unmount/re-mount), re-attach it ──
+  useEffect(() => {
+    const stream = streamRef.current;
+    const video = videoRef.current;
+
+    if (stream && video && isCameraOn) {
+      if (video.srcObject !== stream) {
+        attachStream(stream)
+          .then(() => setCameraReady(true))
+          .catch((err) => {
+            console.warn('Camera re-sync failed:', err);
+            setCameraReady(false);
+          });
+      }
+    }
+  }); // runs every render — cheap ref check, only acts when needed
+
   const startCamera = useCallback(async () => {
     try {
       setCameraError(null);
@@ -21,6 +83,14 @@ export function useCamera() {
       // Check if getUserMedia is available
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Camera API not available. Use HTTPS or localhost.');
+      }
+
+      // If we already have a live stream, just re-attach
+      if (streamRef.current && streamRef.current.active) {
+        await attachStream(streamRef.current);
+        setIsCameraOn(true);
+        setCameraReady(true);
+        return;
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -34,37 +104,13 @@ export function useCamera() {
 
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-
-        // Wait for video to actually have data
-        await new Promise((resolve, reject) => {
-          const video = videoRef.current;
-          const timeout = setTimeout(() => {
-            reject(new Error('Camera stream timeout — try refreshing the page.'));
-          }, 10000);
-
-          video.onloadedmetadata = () => {
-            clearTimeout(timeout);
-            video.play()
-              .then(resolve)
-              .catch(reject);
-          };
-
-          video.onerror = () => {
-            clearTimeout(timeout);
-            reject(new Error('Video element error'));
-          };
-        });
-
-        setCameraReady(true);
-      }
-
+      await attachStream(stream);
+      setCameraReady(true);
       setIsCameraOn(true);
     } catch (err) {
       console.error('Camera access failed:', err);
       let errorMessage;
-      
+
       if (err.name === 'NotAllowedError') {
         errorMessage = '🔒 Camera access denied. Click the camera icon in your browser\'s address bar to allow access, then try again.';
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
@@ -76,12 +122,12 @@ export function useCamera() {
       } else {
         errorMessage = `⚠️ Camera error: ${err.message}`;
       }
-      
+
       setCameraError(errorMessage);
       setIsCameraOn(false);
       setCameraReady(false);
     }
-  }, []);
+  }, [attachStream]);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -101,7 +147,7 @@ export function useCamera() {
     }
 
     const video = videoRef.current;
-    
+
     // Don't capture if video isn't actually playing
     if (video.readyState < 2 || video.videoWidth === 0) {
       return null;
@@ -125,7 +171,7 @@ export function useCamera() {
         break;
       }
     }
-    
+
     if (isBlack) {
       return null; // Skip black frames
     }

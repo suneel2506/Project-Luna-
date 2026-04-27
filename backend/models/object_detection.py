@@ -54,15 +54,17 @@ class ObjectDetector:
             for candidate in candidates:
                 if candidate.exists():
                     model_path = str(candidate)
+                    logger.info("Found YOLO model at: %s", model_path)
                     break
 
             self._model = YOLO(model_path)
-            logger.info("✅ YOLOv8 model loaded: %s", model_path)
+            logger.info("✅ YOLOv8 model loaded: %s (conf threshold: %.2f)", model_path, YOLO_CONFIDENCE)
 
         except ImportError:
-            logger.warning("⚠️  ultralytics not installed — using placeholder detection")
+            logger.warning("⚠️  ultralytics not installed — object detection disabled")
+            logger.warning("   Install with: pip install ultralytics>=8.1.0")
         except Exception as exc:
-            logger.warning("⚠️  Failed to load YOLO model: %s — using placeholder", exc)
+            logger.warning("⚠️  Failed to load YOLO model: %s — object detection disabled", exc)
 
     @property
     def model(self) -> Any:

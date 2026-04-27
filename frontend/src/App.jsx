@@ -72,6 +72,11 @@ function App() {
     try {
       const results = await processFrame(frameData, language, detectors);
 
+      // Backend may throttle — skip silently
+      if (results.skipped) {
+        return;
+      }
+
       // Check if there are any real detections
       const hasDetections =
         (results.objects?.length > 0) ||
@@ -79,9 +84,10 @@ function App() {
         (results.emotions?.length > 0) ||
         (results.signs?.length > 0);
 
-      // Only update overlay and show message when real detections exist
+      // Always update overlay when real detections exist
       if (hasDetections) {
         setLatestResults(results);
+        // Only add chat message if the backend generated one (non-empty after dedup)
         if (results.message) {
           chat.addAIMessage(results.message, results);
         }
@@ -103,6 +109,10 @@ function App() {
       }
     } catch (err) {
       console.error('Frame processing error:', err);
+      // Don't spam errors for throttled responses (429)
+      if (err?.response?.status === 429) {
+        return;
+      }
       if (err.code === 'ERR_NETWORK') {
         chat.addSystemMessage('⚠️ Cannot reach LUNA backend. Is it running?');
         setBackendStatus('offline');
@@ -203,7 +213,10 @@ function App() {
   // ---- Camera start/stop with chat feedback ----
   const handleStartCamera = useCallback(async () => {
     await camera.startCamera();
-    chat.addSystemMessage('📷 Camera started! Click 🔍 Detect to begin analyzing.');
+    // Only show success message if camera actually started
+    if (camera.isCameraOn || !camera.cameraError) {
+      chat.addSystemMessage('📷 Camera started! Click 🔍 Detect to begin analyzing.');
+    }
   }, [camera, chat]);
 
   const handleStopCamera = useCallback(() => {

@@ -18,40 +18,25 @@ export default function CameraPreview({
   detectionResults,
 }) {
   const intervalRef = useRef(null);
+  const onCaptureRef = useRef(onCapture);
 
-  // 🔥 START CAMERA STREAM
+  // Keep the ref always pointing to the latest onCapture callback
   useEffect(() => {
-    if (isCameraOn && videoRef.current) {
-      async function startCamera() {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-          });
+    onCaptureRef.current = onCapture;
+  }, [onCapture]);
 
-          videoRef.current.srcObject = stream;
-        } catch (err) {
-          console.error("Camera error:", err);
-        }
-      }
+  // NOTE: Camera stream is managed by the useCamera hook.
+  // Do NOT call getUserMedia here — it would overwrite the hook's stream
+  // and break frame capture.
 
-      startCamera();
-    }
-
-    // 🛑 STOP CAMERA CLEANLY
-    return () => {
-      if (videoRef.current?.srcObject) {
-        videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [isCameraOn, videoRef]);
-
-  // 🔁 AUTO CAPTURE FRAMES
+  // 🔁 AUTO CAPTURE FRAMES (stable interval — not reset by callback changes)
   useEffect(() => {
     if (isDetecting && isCameraOn) {
-      onCapture();
+      // Initial capture
+      onCaptureRef.current();
 
       intervalRef.current = setInterval(() => {
-        onCapture();
+        onCaptureRef.current();
       }, 2000);
     }
 
@@ -61,7 +46,7 @@ export default function CameraPreview({
         intervalRef.current = null;
       }
     };
-  }, [isDetecting, isCameraOn, onCapture]);
+  }, [isDetecting, isCameraOn]);
 
   // 🎯 BADGES DISPLAY
   const badges = [];

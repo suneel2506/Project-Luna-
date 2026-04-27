@@ -9,7 +9,7 @@ Features:
   • Automatic stale-pending cleanup per configurable TTL
   • Learning history with timestamps and metadata
   • Undo / delete learned item support
-  • Bulk learning capability
+  • Per-module storage directories
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pathlib import Path
 from config import (
     LEARNED_OBJECTS_FILE,
     LEARNED_FACES_FILE,
-    FACES_DIR,
+    FACE_IMAGES_DIR,
     PENDING_TTL_SECONDS,
 )
 
@@ -36,8 +36,8 @@ class UnknownHandler:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.pending_objects: dict[str, dict] = {}   # obj_id → {crop_b64, timestamp,...}
-        self.pending_faces: dict[str, dict] = {}     # face_id → {encoding, crop_b64, timestamp,...}
+        self.pending_objects: dict[str, dict] = {}
+        self.pending_faces: dict[str, dict] = {}
         self.learned_objects: dict[str, dict] = self._load_json(LEARNED_OBJECTS_FILE)
         self.learned_faces_meta: dict[str, dict] = self._load_json(LEARNED_FACES_FILE)
 
@@ -79,12 +79,7 @@ class UnknownHandler:
         crop_b64: str = "",
         label_suggestion: str | None = None,
     ) -> str:
-        """
-        Flag an unknown object for user labeling.
-
-        Returns:
-            The generated object ID for reference in the learning flow.
-        """
+        """Flag an unknown object for user labeling. Returns object ID."""
         obj_id = f"obj_{uuid.uuid4().hex[:8]}"
         self.pending_objects[obj_id] = {
             "crop_b64": crop_b64,
@@ -95,11 +90,7 @@ class UnknownHandler:
         return obj_id
 
     def learn_object(self, obj_id: str | None, label: str) -> bool:
-        """
-        Learn a user-provided label for an unknown object.
-
-        Accepts learning even when *obj_id* is not in pending (direct label).
-        """
+        """Learn a user-provided label for an unknown object."""
         label = label.strip()
         if not label:
             return False
@@ -122,7 +113,7 @@ class UnknownHandler:
     # Face Learning
     # ════════════════════════════════════════════
 
-    def flag_unknown_face(self, encoding, crop_b64: str = "") -> str:
+    def flag_unknown_face(self, encoding=None, crop_b64: str = "") -> str:
         """Flag an unknown face for user labeling. Returns allocated face_id."""
         face_id = f"face_{uuid.uuid4().hex[:8]}"
         self._store_pending_face(face_id, encoding, crop_b64)
@@ -131,13 +122,10 @@ class UnknownHandler:
     def flag_unknown_face_with_id(
         self,
         face_id: str,
-        encoding,
+        encoding=None,
         crop_b64: str = "",
     ) -> str:
-        """
-        Flag an unknown face reusing the ID from FaceRecognizer.
-        Keeps IDs in sync so the learning endpoint can match them.
-        """
+        """Flag an unknown face reusing the ID from FaceRecognizer."""
         self._store_pending_face(face_id, encoding, crop_b64)
         return face_id
 
@@ -246,10 +234,7 @@ class UnknownHandler:
     # ════════════════════════════════════════════
 
     def clear_stale_pending(self, max_age_seconds: int | None = None) -> int:
-        """
-        Remove pending items older than *max_age_seconds*.
-        Returns the number of items removed.
-        """
+        """Remove pending items older than *max_age_seconds*."""
         ttl = max_age_seconds if max_age_seconds is not None else PENDING_TTL_SECONDS
         cutoff = datetime.now() - timedelta(seconds=ttl)
         removed = 0

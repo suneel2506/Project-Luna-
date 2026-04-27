@@ -1,0 +1,12 @@
+{
+  "water bottle": {
+    "learned_at": "2026-04-08T18:25:04.107781",
+    "source": "direct",
+    "original_id": "obj_test123"
+  },
+  "test_obj": {
+    "learned_at": "2026-04-08T18:25:04.128159",
+    "source": "direct",
+    "original_id": null
+  }
+}

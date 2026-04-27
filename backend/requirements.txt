@@ -9,7 +9,7 @@ flask-cors>=5.0.1
 
 # ── Data & Image Processing ──
 numpy>=1.26.0
-opencv-python>=4.9.0
+opencv-contrib-python>=4.9.0    # Includes LBPH face recognizer
 Pillow>=10.0.0
 
 # ── AI Models ──
@@ -21,7 +21,6 @@ pytest>=8.0.0
 pytest-cov>=4.1.0
 
 # ── Optional: Enhanced Features ──
-# Uncomment as needed (may require system deps)
-# face_recognition>=1.3.0       # Requires dlib + CMake
-# deepface>=0.0.80              # Emotion detection
+# Uncomment as needed (requires Python < 3.13 for TensorFlow)
+# deepface>=0.0.80              # Better emotion detection (needs tensorflow)
 # googletrans==4.0.0-rc1        # Dynamic translation
