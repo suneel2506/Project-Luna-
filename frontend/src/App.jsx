@@ -65,7 +65,10 @@ function App() {
     if (chat.isProcessing) return;
 
     const frameData = camera.captureFrame();
-    if (!frameData) return;
+    if (!frameData) {
+      // Frame not ready yet — this is normal during camera warmup
+      return;
+    }
 
     chat.setIsProcessing(true);
 
@@ -87,12 +90,16 @@ function App() {
       // Always update overlay when real detections exist
       if (hasDetections) {
         setLatestResults(results);
-        // Only add chat message if the backend generated one (non-empty after dedup)
+        // Add chat message — show even "no detection" messages
         if (results.message) {
           chat.addAIMessage(results.message, results);
         }
       } else {
         setLatestResults(null);
+        // Still show the message if the backend generated one (e.g. "nothing detected")
+        if (results.message) {
+          chat.addAIMessage(results.message);
+        }
       }
 
       // Check for unknown faces → trigger learning
@@ -212,9 +219,8 @@ function App() {
 
   // ---- Camera start/stop with chat feedback ----
   const handleStartCamera = useCallback(async () => {
-    await camera.startCamera();
-    // Only show success message if camera actually started
-    if (camera.isCameraOn || !camera.cameraError) {
+    const success = await camera.startCamera();
+    if (success) {
       chat.addSystemMessage('📷 Camera started! Click 🔍 Detect to begin analyzing.');
     }
   }, [camera, chat]);

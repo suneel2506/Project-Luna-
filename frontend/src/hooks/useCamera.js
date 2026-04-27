@@ -2,8 +2,8 @@
  * Project LUNA — useCamera Hook
  * Custom hook for webcam access and frame capture.
  *
- * Handles React StrictMode double-mount gracefully by re-syncing
- * the video element with any existing stream after re-mount.
+ * The video element is ALWAYS in the DOM (hidden when off), so
+ * videoRef.current is always available for stream attachment.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -19,33 +19,41 @@ export function useCamera() {
   // ── Helper: attach a stream to the current video element ──
   const attachStream = useCallback(async (stream) => {
     const video = videoRef.current;
-    if (!video || !stream) return false;
+    if (!video || !stream) {
+      console.warn('[useCamera] attachStream: video or stream is null', {
+        hasVideo: !!video,
+        hasStream: !!stream,
+      });
+      return false;
+    }
 
-    // Already attached to this exact element — just make sure it's playing
-    if (video.srcObject === stream) {
-      if (video.paused) {
-        try { await video.play(); } catch { /* ignore */ }
+    // Always re-assign to handle React re-mounts
+    video.srcObject = stream;
+
+    // If metadata is already available, play immediately
+    if (video.readyState >= 1) {
+      try {
+        await video.play();
+      } catch {
+        /* ignore autoplay errors */
       }
       return true;
     }
 
-    video.srcObject = stream;
-
+    // Wait for metadata to load
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Camera stream timeout — try refreshing the page.'));
+        // Don't reject — the stream might still work, just slowly
+        console.warn('[useCamera] Stream metadata took > 10s');
+        resolve();
       }, 10000);
-
-      // If metadata is already available (re-mount scenario), resolve immediately
-      if (video.readyState >= 1) {
-        clearTimeout(timeout);
-        video.play().then(resolve).catch(reject);
-        return;
-      }
 
       video.onloadedmetadata = () => {
         clearTimeout(timeout);
-        video.play().then(resolve).catch(reject);
+        video.play().then(resolve).catch((e) => {
+          console.warn('[useCamera] video.play() failed:', e);
+          resolve(); // Don't reject — autoplay policies may block
+        });
       };
 
       video.onerror = () => {
@@ -57,23 +65,21 @@ export function useCamera() {
     return true;
   }, []);
 
-  // ── Re-sync effect: if we already have a live stream but the video
-  //    element changed (React StrictMode unmount/re-mount), re-attach it ──
+  // ── Re-sync effect: ensure video element always has the stream ──
   useEffect(() => {
     const stream = streamRef.current;
     const video = videoRef.current;
 
-    if (stream && video && isCameraOn) {
+    if (stream && stream.active && video && isCameraOn) {
       if (video.srcObject !== stream) {
-        attachStream(stream)
-          .then(() => setCameraReady(true))
-          .catch((err) => {
-            console.warn('Camera re-sync failed:', err);
-            setCameraReady(false);
-          });
+        console.log('[useCamera] Re-syncing stream to video element');
+        video.srcObject = stream;
+        video.play().catch(() => {});
+      } else if (video.paused) {
+        video.play().catch(() => {});
       }
     }
-  }); // runs every render — cheap ref check, only acts when needed
+  }); // runs every render — cheap ref check
 
   const startCamera = useCallback(async () => {
     try {
@@ -87,12 +93,13 @@ export function useCamera() {
 
       // If we already have a live stream, just re-attach
       if (streamRef.current && streamRef.current.active) {
-        await attachStream(streamRef.current);
+        const attached = await attachStream(streamRef.current);
         setIsCameraOn(true);
         setCameraReady(true);
-        return;
+        return attached;
       }
 
+      // Request camera access
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640 },
@@ -104,9 +111,15 @@ export function useCamera() {
 
       streamRef.current = stream;
 
-      await attachStream(stream);
-      setCameraReady(true);
+      // Attach stream to video element (element is always in DOM now)
+      const attached = await attachStream(stream);
+      if (!attached) {
+        console.warn('[useCamera] attachStream returned false, will re-sync on render');
+      }
+
       setIsCameraOn(true);
+      setCameraReady(true);
+      return true;
     } catch (err) {
       console.error('Camera access failed:', err);
       let errorMessage;
@@ -126,6 +139,7 @@ export function useCamera() {
       setCameraError(errorMessage);
       setIsCameraOn(false);
       setCameraReady(false);
+      return false;
     }
   }, [attachStream]);
 
@@ -142,42 +156,40 @@ export function useCamera() {
   }, []);
 
   const captureFrame = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current || !isCameraOn || !cameraReady) {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (!video || !canvas || !isCameraOn) {
       return null;
     }
 
-    const video = videoRef.current;
-
-    // Don't capture if video isn't actually playing
+    // Don't capture if video isn't actually playing with valid frames
     if (video.readyState < 2 || video.videoWidth === 0) {
       return null;
     }
 
-    const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Check if frame is actually valid (not all black)
-    const imageData = ctx.getImageData(0, 0, 10, 10);
-    const pixels = imageData.data;
-    let isBlack = true;
-    for (let i = 0; i < pixels.length; i += 4) {
-      if (pixels[i] > 10 || pixels[i + 1] > 10 || pixels[i + 2] > 10) {
-        isBlack = false;
+    // Quick check: is the frame all black? (camera warming up)
+    const sample = ctx.getImageData(0, 0, 20, 20);
+    const px = sample.data;
+    let hasColor = false;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i] > 10 || px[i + 1] > 10 || px[i + 2] > 10) {
+        hasColor = true;
         break;
       }
     }
 
-    if (isBlack) {
-      return null; // Skip black frames
+    if (!hasColor) {
+      return null; // Skip black frames silently
     }
 
     return canvas.toDataURL('image/jpeg', 0.7);
-  }, [isCameraOn, cameraReady]);
+  }, [isCameraOn]);
 
   // Cleanup on unmount
   useEffect(() => {

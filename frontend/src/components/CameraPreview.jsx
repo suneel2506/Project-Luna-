@@ -1,6 +1,10 @@
 /**
  * Project LUNA — CameraPreview Component
  * Live webcam feed with detection overlay badges.
+ *
+ * IMPORTANT: The <video> and <canvas> elements are ALWAYS in the DOM
+ * so that useCamera can attach the stream before isCameraOn flips to true.
+ * They are hidden with CSS when the camera is off.
  */
 
 import { useEffect, useRef } from 'react';
@@ -32,12 +36,22 @@ export default function CameraPreview({
   // 🔁 AUTO CAPTURE FRAMES (stable interval — not reset by callback changes)
   useEffect(() => {
     if (isDetecting && isCameraOn) {
-      // Initial capture
-      onCaptureRef.current();
+      // Small delay on first capture to let camera warm up
+      const initTimeout = setTimeout(() => {
+        onCaptureRef.current();
+      }, 500);
 
       intervalRef.current = setInterval(() => {
         onCaptureRef.current();
       }, 2000);
+
+      return () => {
+        clearTimeout(initTimeout);
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      };
     }
 
     return () => {
@@ -120,37 +134,43 @@ export default function CameraPreview({
       </div>
 
       <div className="camera-viewport">
-        {isCameraOn ? (
-          <>
-            <video
-              ref={videoRef}
-              className="camera-video"
-              autoPlay
-              playsInline
-              muted
-            />
+        {/*
+          Video & Canvas are ALWAYS in the DOM so the ref is available
+          when startCamera() calls attachStream(). Hidden when camera is off.
+        */}
+        <video
+          ref={videoRef}
+          id="camera-video"
+          className="camera-video"
+          autoPlay
+          playsInline
+          muted
+          style={{ display: isCameraOn ? 'block' : 'none' }}
+        />
+        <canvas ref={canvasRef} className="camera-canvas" />
 
-            <canvas ref={canvasRef} className="camera-canvas" />
+        {/* Detection overlay badges */}
+        {isCameraOn && badges.length > 0 && (
+          <div className="detection-badges">{badges}</div>
+        )}
 
-            {badges.length > 0 && (
-              <div className="detection-badges">{badges}</div>
-            )}
+        {/* Processing indicator */}
+        {isCameraOn && isProcessing && (
+          <div
+            className="detection-badge badge-object"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              right: 12,
+              animation: 'pulse 1s infinite',
+            }}
+          >
+            ⏳ Analyzing...
+          </div>
+        )}
 
-            {isProcessing && (
-              <div
-                className="detection-badge badge-object"
-                style={{
-                  position: 'absolute',
-                  bottom: 12,
-                  right: 12,
-                  animation: 'pulse 1s infinite',
-                }}
-              >
-                ⏳ Analyzing...
-              </div>
-            )}
-          </>
-        ) : (
+        {/* Placeholder when camera is off */}
+        {!isCameraOn && (
           <div className="camera-placeholder">
             <div className="camera-placeholder-icon">📷</div>
             <div className="camera-placeholder-text">

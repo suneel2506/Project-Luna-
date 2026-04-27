@@ -72,7 +72,10 @@ FLASK_PORT: int = int(os.getenv("LUNA_PORT", "5000"))
 DEBUG: bool = os.getenv("LUNA_DEBUG", "true").lower() in ("1", "true", "yes")
 
 CORS_ORIGINS = [
-    "https://project-luna-opal.vercel.app"
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "https://project-luna-opal.vercel.app",
 ]
 
 # ──────────────────────────────────────────────
@@ -99,7 +102,7 @@ PENDING_TTL_SECONDS: int = 300       # Stale pending items expire after 5 min
 # ──────────────────────────────────────────────
 MAX_CONTEXT_HISTORY: int = 20        # Messages kept in context window
 CONTEXT_TTL_SECONDS: int = 600       # Context expires after 10 min idle
-DEDUP_WINDOW_SECONDS: int = 10       # Suppress duplicate messages within window
+DEDUP_WINDOW_SECONDS: int = 5        # Suppress duplicate messages within window
 
 # ──────────────────────────────────────────────
 # Sign Language
