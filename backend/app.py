@@ -65,8 +65,13 @@ def create_app() -> Flask:
     app = Flask(__name__)
 
     # ── CORS ──
-    CORS(app, origins=CORS_ORIGINS)
-
+    CORS(
+        app,
+        origins=CORS_ORIGINS,
+        allow_headers=["Content-Type", "Authorization"],
+        methods=["GET", "POST", "OPTIONS"],
+        supports_credentials=True
+    )
     # ── Initialise AI modules ──
     logger.info("🌙 Initializing LUNA modules...")
     modules = _init_modules()

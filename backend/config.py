@@ -72,12 +72,6 @@ FLASK_PORT: int = int(os.getenv("LUNA_PORT", "5000"))
 DEBUG: bool = os.getenv("LUNA_DEBUG", "true").lower() in ("1", "true", "yes")
 
 CORS_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-
-    #ADD THIS (production frontend)
     "https://project-luna-opal.vercel.app"
 ]
 
